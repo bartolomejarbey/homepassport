@@ -42,9 +42,9 @@ export async function POST(request: Request) {
   const base64 = Buffer.from(await blob.arrayBuffer()).toString("base64");
   const dataUrl = `data:${mime};base64,${base64}`;
 
-  let guess;
+  let raw;
   try {
-    guess = await recognizeAsset(dataUrl);
+    raw = await recognizeAsset(dataUrl);
   } catch {
     return NextResponse.json(
       { error: "Rozpoznání fotky selhalo" },
@@ -52,6 +52,22 @@ export async function POST(request: Request) {
     );
   }
 
-  // Vracíme NÁVRH. Confidence vždy ukazujeme uživateli.
+  // Sanitace návrhu: jen řetězce a spolehlivost sevřená do 0–1 (AI občas vrátí
+  // > 1 nebo nesmysl). Vracíme NÁVRH — confidence vždy ukazujeme uživateli.
+  const str = (v: unknown): string | undefined =>
+    typeof v === "string" && v.trim() ? v.trim() : undefined;
+  const confidence =
+    typeof raw.confidence === "number" && Number.isFinite(raw.confidence)
+      ? Math.min(1, Math.max(0, raw.confidence))
+      : undefined;
+
+  const guess = {
+    name: str(raw.name),
+    category: str(raw.category),
+    brand: str(raw.brand),
+    model: str(raw.model),
+    confidence,
+  };
+
   return NextResponse.json({ guess });
 }

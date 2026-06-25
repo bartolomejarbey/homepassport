@@ -13,6 +13,7 @@ import {
   BellRing,
   Info,
   ArrowRight,
+  RotateCcw,
 } from "lucide-react";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
@@ -90,6 +91,12 @@ export function SearchBox() {
   function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     run(query);
+  }
+
+  function reset() {
+    setQuery("");
+    setResult(null);
+    setError(null);
   }
 
   return (
@@ -193,6 +200,14 @@ export function SearchBox() {
               <span>{result.disclaimer}</span>
             </p>
           )}
+
+          <button
+            type="button"
+            onClick={reset}
+            className="inline-flex items-center gap-1.5 text-xs text-ink-soft transition-colors hover:text-ink"
+          >
+            <RotateCcw size={13} /> Nová otázka
+          </button>
         </div>
       )}
     </div>

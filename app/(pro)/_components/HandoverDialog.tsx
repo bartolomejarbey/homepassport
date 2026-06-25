@@ -4,6 +4,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { Send, X, Loader2, AlertCircle, Copy, Check, Link2 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -20,6 +21,7 @@ export function HandoverDialog({
   /** A live invite is already out for this property (informational note only). */
   hasPendingInvite?: boolean;
 }) {
+  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -27,10 +29,14 @@ export function HandoverDialog({
   const [copied, setCopied] = useState(false);
 
   function reset() {
+    // If an invite was generated this session, refresh so the parent surfaces the
+    // "Odkaz čeká na kupujícího" badge without a manual reload.
+    const created = invite !== null;
     setOpen(false);
     setError(null);
     setInvite(null);
     setCopied(false);
+    if (created) router.refresh();
   }
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {

@@ -185,12 +185,15 @@ export async function uploadOrgDocument(input: unknown): Promise<UploadDocResult
   if (!user) return { ok: false, error: "Nejste přihlášeni." };
 
   // Access check via RLS: the org link is only readable to org members, so a hit
-  // here proves the caller may upload to this property's passport.
-  const { data: link } = await sb
+  // here proves the caller may upload to this property's passport. A passport can
+  // carry more than one org link (builder + manager), so take the first match
+  // rather than maybeSingle(), which would error on multiple rows.
+  const { data: links } = await sb
     .from("property_org_links")
     .select("property_id, organization_id")
     .eq("property_id", property_id)
-    .maybeSingle();
+    .limit(1);
+  const link = (links as { property_id: string; organization_id: string }[] | null)?.[0];
   if (!link) {
     return { ok: false, error: "Nemáte oprávnění nahrávat k tomuto pasu." };
   }
@@ -203,6 +206,11 @@ export async function uploadOrgDocument(input: unknown): Promise<UploadDocResult
   }
   if (bytes.byteLength === 0) {
     return { ok: false, error: "Soubor je prázdný." };
+  }
+  // The base64 payload is the real source of truth — a client could understate
+  // size_bytes. Enforce the 25 MB cap on the decoded bytes too.
+  if (bytes.byteLength > 25 * 1024 * 1024) {
+    return { ok: false, error: "Soubor je příliš velký (max 25 MB)." };
   }
 
   const admin = createAdminClient();
@@ -265,7 +273,7 @@ export async function uploadOrgDocument(input: unknown): Promise<UploadDocResult
 
   await admin.from("audit_events").insert({
     actor_id: user.id,
-    organization_id: (link as { organization_id?: string }).organization_id ?? null,
+    organization_id: link.organization_id ?? null,
     property_id,
     action: "document.uploaded_by_builder",
     target: { category, filename },

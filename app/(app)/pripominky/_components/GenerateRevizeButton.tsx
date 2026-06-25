@@ -12,6 +12,7 @@ type Result = {
   evaluated: number;
   created: number;
   skipped: number;
+  superseded: number;
   usage: string;
 };
 
@@ -75,8 +76,11 @@ export function GenerateRevizeButton({ propertyId }: { propertyId: string }) {
             ? "Pro tuto nemovitost a způsob užívání nemáme žádnou revizi k hlídání"
             : result.created > 0
               ? `Přidáno ${result.created} ${result.created === 1 ? "připomínka" : result.created < 5 ? "připomínky" : "připomínek"}`
-              : "Vše už máte spočítané"}
+              : result.superseded > 0
+                ? "Připomínky jsme aktualizovali podle nového využití"
+                : "Vše už máte spočítané"}
           {result.evaluated > 0 && result.skipped > 0 && ` · ${result.skipped} už existovalo`}
+          {result.superseded > 0 && ` · ${result.superseded} nahrazeno dle nového využití`}
           {" · režim: "}
           {USAGE_LABEL[result.usage] ?? result.usage}
         </p>

@@ -10,6 +10,7 @@ import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { extractDocument, type DocExtraction } from "@/lib/ai";
+import { DeleteDocumentButton } from "../_components/DeleteDocumentButton";
 
 export const metadata = { title: "Dokument — Home Passport" };
 
@@ -24,6 +25,39 @@ const CATEGORY_LABEL: Record<string, string> = {
   insurance: "Pojištění",
   other: "Ostatní",
 };
+
+// AI vrací kategorii volným textem (a často česky). Na enum sloupec doc_category
+// smíme zapsat jen platnou hodnotu — vše ostatní ignorujeme (radši nic než chyba
+// nebo smyšlená kategorie). Bezpečně mapujeme jen jednoznačné shody.
+const DOC_CATEGORIES = [
+  "contract",
+  "invoice",
+  "penb",
+  "inspection",
+  "manual",
+  "warranty",
+  "plan",
+  "insurance",
+  "other",
+] as const;
+const CATEGORY_ALIASES: Record<string, (typeof DOC_CATEGORIES)[number]> = {
+  smlouva: "contract",
+  faktura: "invoice",
+  "revizní zpráva": "inspection",
+  revize: "inspection",
+  záruka: "warranty",
+  návod: "manual",
+  pojištění: "insurance",
+  plán: "plan",
+  výkres: "plan",
+};
+function normalizeCategory(raw: unknown): (typeof DOC_CATEGORIES)[number] | null {
+  if (typeof raw !== "string") return null;
+  const v = raw.trim().toLowerCase();
+  if ((DOC_CATEGORIES as readonly string[]).includes(v))
+    return v as (typeof DOC_CATEGORIES)[number];
+  return CATEGORY_ALIASES[v] ?? null;
+}
 
 type Status = "draft" | "confirmed" | "rejected";
 type ExtractionRow = {
@@ -97,12 +131,24 @@ async function confirmExtraction(formData: FormData) {
     .eq("id", extractionId)
     .eq("status", "draft"); // závodní podmínka: potvrď jen pokud je stále koncept
 
+  const data = (ext.extracted ?? {}) as DocExtraction;
+
+  // Potvrzená data se stávají zdrojem pravdy: doplníme jen prázdná/„other" pole
+  // dokumentu, nikdy nepřepisujeme to, co uživatel zadal ručně při nahrání.
+  const patch: { category?: string } = {};
+  const suggested = normalizeCategory(data.category);
+  if (suggested && doc.category === "other") patch.category = suggested;
+  if (Object.keys(patch).length > 0) {
+    await sb.from("documents").update(patch).eq("id", doc.id);
+  }
+
+  // Efektivní kategorie po potvrzení (mohli jsme ji právě doplnit z návrhu).
+  const effectiveCategory = patch.category ?? doc.category;
+
   // Volitelně založit připomínku z potvrzených dat — bez duplicit. Záruka i revize
   // jsou pro vlastníka jen "doporučené"; nikdy netvrdíme, že to ukládá zákon.
   // Deduplikace dle document_id + type: potvrzení dalšího návrhu téhož dokumentu
   // (např. po opakované extrakci) už druhou připomínku nevytvoří.
-  const data = (ext.extracted ?? {}) as DocExtraction;
-
   async function ensureReminder(
     type: "warranty" | "inspection",
     title: string,
@@ -134,7 +180,7 @@ async function confirmExtraction(formData: FormData) {
       `Konec záruky: ${doc.title ?? "dokument"}`,
       data.warranty_until,
     );
-  } else if (doc.category === "inspection") {
+  } else if (effectiveCategory === "inspection") {
     // POCTIVOST: datum na revizní zprávě je datum PROVEDENÍ revize, ne termín
     // další revize. Interval (a tím i další termín) plyne z kontextu nemovitosti,
     // ne z dokumentu — proto due_date necháváme prázdné a uživatele nasměrujeme
@@ -147,8 +193,41 @@ async function confirmExtraction(formData: FormData) {
   }
 
   revalidatePath(`/dokumenty/${documentId}`);
-  revalidatePath("/dokumenty"); // odznak „Potvrzeno" v seznamu
+  revalidatePath("/dokumenty"); // odznak „Potvrzeno" + případně nová kategorie
   revalidatePath("/pripominky"); // mohla vzniknout připomínka ze záruky/revize
+  revalidatePath("/prehled"); // dlaždice na dashboardu
+}
+
+// Smazání dokumentu — odstraní soubor z úložiště i řádek (extrakce a připomínky
+// padají kaskádou dle FK). Vrací uživatele na seznam. RLS hlídá, že maže jen
+// vlastní dokument; když na něj nemá právo, select níže vrátí null a nic se nestane.
+async function deleteDocument(formData: FormData) {
+  "use server";
+  const documentId = String(formData.get("documentId"));
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) redirect("/prihlaseni");
+
+  const { data: doc } = await sb
+    .from("documents")
+    .select("id, file_path")
+    .eq("id", documentId)
+    .maybeSingle();
+  if (!doc) redirect("/dokumenty"); // neexistuje nebo bez práv — prostě zpět
+
+  // Nejdřív soubor z úložiště (ať nezůstane viset), pak řádek. Pokud smazání
+  // souboru selže, řádek raději ponecháme, ať detail nezůstane bez podkladu.
+  const { error: rmErr } = await sb.storage.from("documents").remove([doc.file_path]);
+  if (rmErr) return; // tichá chyba — uživatel může zkusit znovu
+
+  await sb.from("documents").delete().eq("id", doc.id);
+
+  revalidatePath("/dokumenty");
+  revalidatePath("/pripominky"); // navázané připomínky zmizely
+  revalidatePath("/prehled");
+  redirect("/dokumenty");
 }
 
 // Re-spuštění AI extrakce z detailu (když po nahrání selhala nebo byl návrh odmítnut).
@@ -434,6 +513,19 @@ export default async function DokumentDetailPage({
           </div>
         </Card>
       </div>
+
+      {/* Správa dokumentu */}
+      <Card className="flex flex-wrap items-center justify-between gap-3 border-rust-100">
+        <div>
+          <h2 className="font-display text-base font-semibold text-ink">
+            Smazat dokument
+          </h2>
+          <p className="mt-0.5 text-sm text-muted">
+            Trvale odstraní soubor z úložiště i všechna navržená data. Tuto akci nelze vrátit zpět.
+          </p>
+        </div>
+        <DeleteDocumentButton documentId={doc.id} action={deleteDocument} />
+      </Card>
     </div>
   );
 }

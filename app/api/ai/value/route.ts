@@ -75,6 +75,13 @@ export async function POST(request: Request) {
       ? Math.min(1, Math.max(0, est.confidence))
       : null;
 
+  // Měna musí být platný 3písmenný ISO kód, jinak by Intl.NumberFormat na
+  // klientovi spadl (AI občas vrátí "Kč" apod.). Při pochybnosti → CZK.
+  const currency =
+    typeof est.currency === "string" && /^[A-Za-z]{3}$/.test(est.currency)
+      ? est.currency.toUpperCase()
+      : "CZK";
+
   // Uložená hodnota = střed rozsahu (hrubý odhad). Rozsah vracíme klientovi
   // pro čestné zobrazení "od–do".
   const mid =
@@ -108,7 +115,7 @@ export async function POST(request: Request) {
       low,
       high,
       mid,
-      currency: est.currency ?? "CZK",
+      currency,
       confidence,
     },
   });

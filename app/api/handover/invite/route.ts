@@ -7,6 +7,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { publicOrigin } from "../origin";
 
 // E-mail kupujícího validujeme i přesto, že RLS hlídá přístup k nemovitosti.
 const Body = z.object({
@@ -81,8 +82,10 @@ export async function POST(request: Request) {
     target: { buyer_email: parsed.buyerEmail, invitation_id: invitation.id },
   });
 
-  // Sdílecí odkaz stavíme z hlavičky requestu (funguje na prod i lokálně).
-  const origin = new URL(request.url).origin;
+  // Sdílecí odkaz musí být VEŘEJNÝ — kupující ho dostane e-mailem. Za reverzní
+  // proxy je request.url interní (localhost), proto preferujeme NEXT_PUBLIC_APP_URL
+  // a forwarded hlavičky (viz origin.ts).
+  const origin = publicOrigin(request);
   const url = `${origin}/prevzit/${invitation.token}`;
 
   return NextResponse.json({

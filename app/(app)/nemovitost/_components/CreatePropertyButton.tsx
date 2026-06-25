@@ -1,7 +1,7 @@
 // Client dialog to found a new property (calls the createProperty server action).
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Plus, X, Loader2, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/Button";
@@ -23,6 +23,23 @@ export function CreatePropertyButton() {
   const [open, setOpen] = useState(false);
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const firstFieldRef = useRef<HTMLSelectElement>(null);
+
+  // Modal niceties: lock body scroll, autofocus first field, Escape to close.
+  useEffect(() => {
+    if (!open) return;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    firstFieldRef.current?.focus();
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape" && !pending) setOpen(false);
+    }
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open, pending]);
 
   function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -101,6 +118,7 @@ export function CreatePropertyButton() {
                   Typ nemovitosti
                 </label>
                 <select
+                  ref={firstFieldRef}
                   id="type"
                   name="type"
                   defaultValue="house"

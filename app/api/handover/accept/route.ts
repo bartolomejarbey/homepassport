@@ -18,6 +18,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { publicOrigin } from "../origin";
 
 const Body = z.object({ token: z.string().trim().min(1).max(128) });
 
@@ -25,7 +26,9 @@ const Body = z.object({ token: z.string().trim().min(1).max(128) });
 type ErrCode = "expired" | "taken" | "nohousehold" | "failed";
 
 export async function POST(request: Request) {
-  const origin = new URL(request.url).origin;
+  // Redirecty po form POST musí vést na VEŘEJNÝ origin (za proxy je request.url
+  // interní localhost), jinak by prohlížeč skončil na neveřejné adrese.
+  const origin = publicOrigin(request);
   const contentType = request.headers.get("content-type") ?? "";
   const wantsRedirect = contentType.includes("application/x-www-form-urlencoded");
 
@@ -205,10 +208,32 @@ export async function POST(request: Request) {
       .from("documents")
       .move(doc.file_path, newPath);
 
-    // "already exists" bereme jako úspěch — objekt už na cílové cestě je.
-    const alreadyThere = moveErr?.message?.toLowerCase().includes("exists");
-    if (moveErr && !alreadyThere) {
-      moveFailures.push({ id: doc.id, error: moveErr.message });
+    // Idempotence pro DŘÍVE částečně dokončený přesun: pokud se přesun nezdaří,
+    // ověř, zda objekt na cílové cestě UŽ neleží. Dva scénáře předchozího běhu:
+    //   1) "exists" — move proběhl, ale objekt na cíli už byl (kolize názvu),
+    //   2) zdroj "not found" — move proběhl minule, jen selhal následný UPDATE
+    //      documents (soubor je na newPath, ale file_path stále ukazuje na starý).
+    // V obou případech je pravdivý stav „objekt už je na cíli" — dotáhneme jen
+    // metadata. Bez tohoto by osiřelý soubor zůstal navždy mimo dosah kupujícího.
+    let destReady = !moveErr;
+    if (moveErr) {
+      if (moveErr.message?.toLowerCase().includes("exists")) {
+        destReady = true;
+      } else {
+        // Existuje objekt přesně na cílové cestě? (list na rodičovské složce s
+        // přesným prefixem názvu — admin obchází RLS.)
+        const slash = newPath.lastIndexOf("/");
+        const dir = slash >= 0 ? newPath.slice(0, slash) : "";
+        const base = slash >= 0 ? newPath.slice(slash + 1) : newPath;
+        const { data: listed } = await admin.storage
+          .from("documents")
+          .list(dir, { search: base, limit: 100 });
+        destReady = (listed ?? []).some((o) => o.name === base);
+      }
+    }
+
+    if (!destReady) {
+      moveFailures.push({ id: doc.id, error: moveErr?.message ?? "move failed" });
       continue;
     }
 

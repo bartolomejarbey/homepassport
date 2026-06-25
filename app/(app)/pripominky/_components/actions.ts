@@ -6,6 +6,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 const idSchema = z.string().uuid();
 
@@ -33,7 +34,9 @@ export async function markDone(formData: FormData): Promise<void> {
   // RLS ensures we can only touch reminders we own.
   await sb.from("reminders").update({ status: "done" }).eq("id", parsed.data);
 
-  await sb.from("audit_events").insert({
+  // audit_events has only a SELECT policy — writes go through the service role,
+  // otherwise RLS silently drops them and the trail is lost.
+  await createAdminClient().from("audit_events").insert({
     actor_id: user.id,
     action: "reminder.done",
     target: { reminder_id: parsed.data },
@@ -52,7 +55,7 @@ export async function reopen(formData: FormData): Promise<void> {
 
   await sb.from("reminders").update({ status: "open" }).eq("id", parsed.data);
 
-  await sb.from("audit_events").insert({
+  await createAdminClient().from("audit_events").insert({
     actor_id: user.id,
     action: "reminder.reopened",
     target: { reminder_id: parsed.data },
@@ -93,7 +96,7 @@ export async function snooze(formData: FormData): Promise<void> {
     .update({ due_date: due, status: "snoozed" })
     .eq("id", id.data);
 
-  await sb.from("audit_events").insert({
+  await createAdminClient().from("audit_events").insert({
     actor_id: user.id,
     action: "reminder.snoozed",
     target: { reminder_id: id.data, days: days.data, due_date: due },

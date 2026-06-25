@@ -20,6 +20,25 @@ const CATEGORIES = [
   { value: "other", label: "Ostatní" },
 ] as const;
 
+// Bezpečnostní limity: omezíme typ i velikost už v prohlížeči (Storage RLS to
+// nehlídá). PDF a obrázky pokrývají faktury, revizní zprávy i záruky.
+const MAX_BYTES = 20 * 1024 * 1024; // 20 MB
+const ACCEPTED_PREFIXES = ["image/"];
+const ACCEPTED_TYPES = ["application/pdf"];
+
+function fileError(f: File): string | null {
+  if (f.size > MAX_BYTES) {
+    return `Soubor je příliš velký (${(f.size / 1024 / 1024).toFixed(1)} MB). Maximum je 20 MB.`;
+  }
+  const ok =
+    ACCEPTED_TYPES.includes(f.type) ||
+    ACCEPTED_PREFIXES.some((p) => f.type.startsWith(p)) ||
+    // některé prohlížeče u .pdf neposílají MIME — povolíme dle přípony
+    /\.pdf$/i.test(f.name);
+  if (!ok) return "Podporujeme jen PDF a obrázky (JPG, PNG, HEIC).";
+  return null;
+}
+
 export function UploadCard({
   householdId,
   propertyId = null,
@@ -37,11 +56,21 @@ export function UploadCard({
   const [error, setError] = useState<string | null>(null);
   const [, startTransition] = useTransition();
 
+  function onPick(picked: File | null) {
+    setError(picked ? fileError(picked) : null);
+    setFile(picked);
+  }
+
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
     if (!file) {
       setError("Vyberte prosím soubor.");
+      return;
+    }
+    const fe = fileError(file);
+    if (fe) {
+      setError(fe);
       return;
     }
     setBusy(true);
@@ -133,7 +162,7 @@ export function UploadCard({
             type="file"
             accept="image/*,application/pdf"
             className="sr-only"
-            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+            onChange={(e) => onPick(e.target.files?.[0] ?? null)}
           />
         </label>
 
@@ -172,7 +201,12 @@ export function UploadCard({
           </p>
         )}
 
-        <Button type="submit" variant="honey" disabled={busy || !file} className="w-full sm:w-auto">
+        <Button
+          type="submit"
+          variant="honey"
+          disabled={busy || !file || Boolean(file && fileError(file))}
+          className="w-full sm:w-auto"
+        >
           {busy ? (
             <>
               <Loader2 size={15} className="animate-spin" /> Nahrávám…

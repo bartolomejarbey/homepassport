@@ -26,11 +26,14 @@ export const metadata = { title: "Přehled — Home Passport" };
 // Tóny štítku stavu pasu — podmnožina tónů komponenty Badge.
 type StatTone = "verified" | "insurance_recommended" | "recommended";
 
+// Jméno do pozdravu: celé jméno → jeho první část, jinak část e-mailu před @.
+// Přihlášený uživatel má vždy e-mail, takže prázdný řetězec je jen pojistka
+// (pozdrav pak gracefully degraduje na "Vítejte zpět" bez visící čárky).
 function firstName(full: string | null, email: string | null | undefined) {
   const n = (full ?? "").trim();
   if (n) return n.split(/\s+/)[0];
   if (email) return email.split("@")[0];
-  return "vítejte";
+  return "";
 }
 
 export default async function PrehledPage() {
@@ -186,35 +189,48 @@ export default async function PrehledPage() {
   // Rychlé akce — vždy míří na existující trasy. Cíl nemovitosti se přizpůsobí,
   // zda už nějakou máte (detail vs. seznam se zakládáním).
   const passportHref = propertyId ? `/nemovitost/${propertyId}` : "/nemovitost";
+  // needsProperty: akce, které dávají smysl až po založení nemovitosti
+  // (revize jsou vázané na konkrétní nemovitost a její využití). Ostatní akce
+  // — nahrání dokumentu, přidání majetku fotkou, hledání — fungují i bez ní,
+  // takže je nabídneme hned, aby přehled nezel prázdnotou už od začátku.
   const quickActions = [
     {
       label: "Nahrát dokument",
       icon: Upload,
       href: "/dokumenty",
+      needsProperty: false,
     },
     {
       label: "Přidat majetek fotkou",
       icon: Camera,
       href: "/majetek",
+      needsProperty: false,
     },
     {
       label: "Spočítat revize",
       icon: BellRing,
       href: "/pripominky",
+      needsProperty: true,
     },
     {
       label: "Hledat ve svých datech",
       icon: Search,
       href: "/hledat",
+      needsProperty: false,
     },
   ] as const;
+  const visibleActions = quickActions.filter(
+    (a) => hasProperty || !a.needsProperty,
+  );
+
+  const greetingName = firstName(profile?.full_name ?? null, user?.email);
 
   return (
     <div className="space-y-6">
       <header>
         <p className="text-sm text-muted">Přehled</p>
         <h1 className="mt-1 text-2xl font-semibold text-ink sm:text-3xl">
-          Vítejte zpět, {firstName(profile?.full_name ?? null, user?.email)}
+          {greetingName ? `Vítejte zpět, ${greetingName}` : "Vítejte zpět"}
         </h1>
         <p className="mt-1 text-sm text-ink-soft">
           Stav vaší nemovitosti a domácnosti na jednom místě.
@@ -286,22 +302,24 @@ export default async function PrehledPage() {
 
       <AttentionReminders items={attention} />
 
-      {hasProperty && (
+      {householdId && (
         <section className="space-y-3">
           <div className="flex items-center justify-between">
             <h2 className="font-display text-lg font-semibold text-ink">
               Rychlé akce
             </h2>
-            <Link
-              href="/nemovitost"
-              className="inline-flex items-center gap-1 text-sm font-medium text-navy hover:underline"
-            >
-              Otevřít nemovitost
-              <ArrowRight size={14} />
-            </Link>
+            {hasProperty && (
+              <Link
+                href={passportHref}
+                className="inline-flex items-center gap-1 text-sm font-medium text-navy hover:underline"
+              >
+                Otevřít nemovitost
+                <ArrowRight size={14} />
+              </Link>
+            )}
           </div>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            {quickActions.map(({ label, icon: Icon, href }) => (
+            {visibleActions.map(({ label, icon: Icon, href }) => (
               <Link key={label} href={href} className="block">
                 <Card className="flex h-full items-center gap-3 transition-colors hover:border-navy/30">
                   <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-surface-2">

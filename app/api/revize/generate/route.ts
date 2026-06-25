@@ -9,6 +9,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { buildReminderDrafts, activeUsage } from "@/lib/revize/engine";
 import type { PropertyContext, RevisionRule } from "@/lib/db/types";
 
@@ -122,6 +123,8 @@ export async function POST(request: Request) {
   const drafts = [...bySystem.values()];
 
   // Existující připomínky této nemovitosti — deduplikace dle title + legal_basis.
+  // Schéma reminders nemá sloupec system_type, takže systém u existující připomínky
+  // odvozujeme zpětně z legal_basis pravidla (legal_basis -> system_type).
   const { data: existingData } = await sb
     .from("reminders")
     .select("id, title, legal_basis, status")
@@ -131,6 +134,41 @@ export async function POST(request: Request) {
   const seen = new Set(
     existing.map((r) => `${r.title} ${r.legal_basis ?? ""}`),
   );
+
+  // Mapa legal_basis -> system_type přes VŠECHNA načtená pravidla (napříč režimy
+  // užívání). Slouží k rozpoznání, ke kterému systému patří stará připomínka.
+  const basisToSystem = new Map<string, string>();
+  for (const r of rules) {
+    if (r.legal_basis) basisToSystem.set(r.legal_basis, r.system_type);
+  }
+  const newBasisBySystem = new Map<string, string | null>();
+  for (const d of drafts) newBasisBySystem.set(d.system_type, d.legal_basis);
+
+  // Supersedace: změní-li uživatel způsob užívání (např. vlastní bydlení → pronájem),
+  // u téhož systému se mění wording_type i právní základ. Staré OTEVŘENÉ připomínky
+  // pro tentýž systém, které už neodpovídají aktuálnímu pravidlu, poctivě uzavřeme
+  // jako 'dismissed' — jinak by vedle sebe svítila rozporná znění (doporučeno × ze zákona).
+  const supersededIds = existing
+    .filter((r) => r.status === "open" || r.status === "snoozed")
+    .filter((r) => {
+      const sys = r.legal_basis ? basisToSystem.get(r.legal_basis) : undefined;
+      if (!sys || !newBasisBySystem.has(sys)) return false;
+      return newBasisBySystem.get(sys) !== (r.legal_basis ?? null);
+    })
+    .map((r) => r.id);
+
+  let superseded = 0;
+  if (supersededIds.length > 0) {
+    const { error: supErr } = await sb
+      .from("reminders")
+      .update({ status: "dismissed" })
+      .in("id", supersededIds);
+    if (!supErr) superseded = supersededIds.length;
+    // Uzavřené nesmí blokovat dedup nového znění → vyjmeme je ze 'seen'.
+    for (const r of existing) {
+      if (supersededIds.includes(r.id)) seen.delete(`${r.title} ${r.legal_basis ?? ""}`);
+    }
+  }
 
   const toInsert = drafts
     .filter((d) => !seen.has(`${d.title} ${d.legal_basis ?? ""}`))
@@ -160,18 +198,23 @@ export async function POST(request: Request) {
     created = inserted?.length ?? 0;
   }
 
-  await sb.from("audit_events").insert({
-    actor_id: user.id,
-    household_id: householdId,
-    property_id: parsed.propertyId,
-    action: "revize.generated",
-    target: { usage: activeUsage(ctx), drafts: drafts.length, created },
-  });
+  // audit_events má jen SELECT policy (RLS) — zápis proto vede přes service role,
+  // jinak by ho RLS tiše zahodila a audit stopa by chyběla.
+  await createAdminClient()
+    .from("audit_events")
+    .insert({
+      actor_id: user.id,
+      household_id: householdId,
+      property_id: parsed.propertyId,
+      action: "revize.generated",
+      target: { usage: activeUsage(ctx), drafts: drafts.length, created, superseded },
+    });
 
   return NextResponse.json({
     usage: activeUsage(ctx),
     evaluated: drafts.length,
     created,
     skipped: drafts.length - created,
+    superseded,
   });
 }
