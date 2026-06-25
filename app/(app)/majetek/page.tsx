@@ -71,16 +71,21 @@ export default async function MajetekPage() {
   }
 
   // Seskupit podle místnosti (bez místnosti → "Bez zařazení").
+  const UNASSIGNED = "Bez zařazení";
   const groups = new Map<string, AssetRow[]>();
   for (const a of assets) {
-    const key = a.room?.trim() || "Bez zařazení";
+    const key = a.room?.trim() || UNASSIGNED;
     const arr = groups.get(key) ?? [];
     arr.push(a);
     groups.set(key, arr);
   }
-  const groupedRooms = Array.from(groups.entries()).sort(([a], [b]) =>
-    a.localeCompare(b, "cs"),
-  );
+  // Místnosti řadíme abecedně (cs), ale "Bez zařazení" patří vždy na konec —
+  // nemíchat položky bez zařazení doprostřed pojmenovaných místností.
+  const groupedRooms = Array.from(groups.entries()).sort(([a], [b]) => {
+    if (a === UNASSIGNED) return 1;
+    if (b === UNASSIGNED) return -1;
+    return a.localeCompare(b, "cs");
+  });
 
   const total = assets.reduce((sum, a) => sum + (a.estimated_value ?? 0), 0);
   const valuedCount = assets.filter((a) => a.estimated_value != null).length;
@@ -124,14 +129,20 @@ export default async function MajetekPage() {
                     <p className="text-sm font-medium text-ink-soft">
                       Odhadovaná hodnota inventáře
                     </p>
-                    <p className="mt-1 font-display text-3xl font-semibold text-ink">
-                      {fmtCzk(total) ?? "0 Kč"}
-                    </p>
+                    {valuedCount === 0 ? (
+                      <p className="mt-1 font-display text-2xl font-semibold text-muted">
+                        Zatím neodhadnuto
+                      </p>
+                    ) : (
+                      <p className="mt-1 font-display text-3xl font-semibold text-ink">
+                        {fmtCzk(total) ?? "0 Kč"}
+                      </p>
+                    )}
                   </div>
-                  <p className="text-xs text-muted">
-                    Hrubý odhad z {valuedCount} z {assets.length}{" "}
-                    {assets.length === 1 ? "položky" : "položek"}. Pouze
-                    orientační.
+                  <p className="max-w-[16rem] text-xs text-muted">
+                    {valuedCount === 0
+                      ? `Žádná z ${assets.length} ${assets.length === 1 ? "položky" : "položek"} zatím nemá odhad hodnoty. Otevřete položku a spusťte hrubý odhad.`
+                      : `Hrubý součet z ${valuedCount} z ${assets.length} ${assets.length === 1 ? "položky" : "položek"}. Pouze orientační.`}
                   </p>
                 </Card>
 

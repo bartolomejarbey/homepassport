@@ -87,13 +87,22 @@ export function AuthForm({ mode, next }: { mode: Mode; next?: string }) {
 
   if (confirmSent) {
     return (
-      <div className="rounded-lg border border-line bg-teal-100 p-5 text-sm text-ink">
-        <div className="flex items-center gap-2 font-semibold text-teal">
-          <MailCheck size={18} /> Zkontrolujte e-mail
+      <div className="space-y-4">
+        <div className="rounded-lg border border-line bg-teal-100 p-5 text-sm text-ink">
+          <div className="flex items-center gap-2 font-semibold text-teal">
+            <MailCheck size={18} /> Zkontrolujte e-mail
+          </div>
+          <p className="mt-2 text-ink-soft">
+            Poslali jsme vám potvrzovací odkaz. Po jeho otevření se přihlásíte
+            a přejdete do svého pasu.
+          </p>
         </div>
-        <p className="mt-2 text-ink-soft">
-          Poslali jsme vám potvrzovací odkaz. Po jeho otevření se přihlásíte
-          a přejdete do svého pasu.
+        <p className="text-center text-sm text-ink-soft">
+          Odkaz nedorazil? Zkontrolujte spam, nebo se po potvrzení{" "}
+          <Link href={loginHref} className="font-medium text-navy hover:underline">
+            přihlaste
+          </Link>
+          .
         </p>
       </div>
     );

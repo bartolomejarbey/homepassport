@@ -27,6 +27,7 @@ import {
   PassportSections,
   type PassportSectionRow,
 } from "../_components/PassportSections";
+import { EditPropertyForm } from "../_components/EditPropertyForm";
 
 type Params = { id: string };
 
@@ -164,6 +165,20 @@ export default async function NemovitostDetailPage({
           </Button>
         </Link>
       </header>
+
+      {/* Edit the passport's own identity fields (collapsed behind a button). */}
+      <EditPropertyForm
+        property={{
+          id: property.id,
+          type: property.type,
+          title: property.title,
+          street: property.street,
+          city: property.city,
+          postal_code: property.postal_code,
+          cadastral_id: property.cadastral_id,
+          status: property.status,
+        }}
+      />
 
       {/* Context nudge */}
       {!contextDone && (

@@ -46,14 +46,29 @@ export async function markDone(formData: FormData): Promise<void> {
   revalidatePath("/prehled");
 }
 
-/** Re-open a reminder that was marked done (or dismissed) by mistake. */
+/**
+ * Re-open a reminder that the user marked done by mistake.
+ * Only acts on status 'done'. 'dismissed' reminders were retired by the engine
+ * when the property context changed (supersession) — re-opening them would put
+ * stale, contradictory wording next to the current one, so we deliberately skip
+ * them here as well as in the UI. The .eq("status","done") guard keeps the
+ * server action honest even if it is invoked outside the rendered form.
+ */
 export async function reopen(formData: FormData): Promise<void> {
   const parsed = idSchema.safeParse(formData.get("reminderId"));
   if (!parsed.success) return;
 
   const { sb, user } = await requireUser();
 
-  await sb.from("reminders").update({ status: "open" }).eq("id", parsed.data);
+  const { data: updated } = await sb
+    .from("reminders")
+    .update({ status: "open" })
+    .eq("id", parsed.data)
+    .eq("status", "done")
+    .select("id");
+
+  // Nothing flipped (e.g. a superseded reminder) → no state change, no audit row.
+  if (!updated || updated.length === 0) return;
 
   await createAdminClient().from("audit_events").insert({
     actor_id: user.id,
@@ -89,7 +104,8 @@ export async function snooze(formData: FormData): Promise<void> {
   // i formátujeme lokálně, ať uložený termín přesně sedí s tím, co uvidí uživatel.
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  let base = today;
+  // Defensive copy: base.setDate() below mutates in place, so never alias `today`.
+  let base = new Date(today);
   if (current?.due_date) {
     const [y, m, d] = current.due_date.split("-").map(Number);
     const parsed = new Date(y, (m ?? 1) - 1, d ?? 1);

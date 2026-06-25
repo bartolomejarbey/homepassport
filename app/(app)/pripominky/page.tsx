@@ -67,9 +67,13 @@ export default async function PripominkyPage() {
   const openReminders = reminders.filter(
     (r) => r.status === "open" || r.status === "snoozed",
   );
-  const doneReminders = reminders.filter(
-    (r) => r.status === "done" || r.status === "dismissed",
-  );
+  // „Hotové" = uživatel revizi vyřídil. „Nahrazené" (dismissed) je jiný případ:
+  // tyto připomínky uzavřel engine při změně kontextu nemovitosti (např. vlastní
+  // bydlení → pronájem), protože pro daný systém už platí jiné znění. Nesmí
+  // splývat s hotovými ani je nejde „znovu otevřít" — vrátily by rozporné znění
+  // vedle aktuálního. Proto je vedeme zvlášť a jen informativně.
+  const doneReminders = reminders.filter((r) => r.status === "done");
+  const supersededReminders = reminders.filter((r) => r.status === "dismissed");
 
   // Pořadí otevřených: zákonné dřív, pak dle termínu (bez termínu na konec).
   const wordingRank: Record<string, number> = {
@@ -215,6 +219,29 @@ export default async function PripominkyPage() {
               <div className="space-y-3 opacity-75">
                 {doneReminders.map((r) => (
                   <ReminderCard key={r.id} reminder={r} />
+                ))}
+              </div>
+            </section>
+          )}
+
+          {supersededReminders.length > 0 && (
+            <section className="space-y-3">
+              <div className="flex items-center gap-2">
+                <h2 className="font-display text-lg font-semibold text-ink-soft">
+                  Nahrazené
+                </h2>
+                <span className="text-sm text-muted">
+                  ({supersededReminders.length})
+                </span>
+              </div>
+              <p className="max-w-prose text-xs text-muted">
+                Tyto připomínky jsme uzavřeli, když se změnil způsob užívání
+                nemovitosti — pro daný systém už platí jiné znění (najdete ho mezi
+                otevřenými). Necháváme je jen pro pořádek.
+              </p>
+              <div className="space-y-3 opacity-60">
+                {supersededReminders.map((r) => (
+                  <ReminderCard key={r.id} reminder={r} superseded />
                 ))}
               </div>
             </section>

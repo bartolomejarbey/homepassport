@@ -8,6 +8,7 @@ import {
   RotateCcw,
   AlarmClockOff,
   Scale,
+  Archive,
 } from "lucide-react";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
@@ -87,7 +88,16 @@ function dueState(d: string | null) {
   return { label: fmtDate(d)!, overdue: false };
 }
 
-export function ReminderCard({ reminder }: { reminder: ReminderRow }) {
+export function ReminderCard({
+  reminder,
+  superseded = false,
+}: {
+  reminder: ReminderRow;
+  /** Připomínka uzavřená enginem při změně kontextu (status 'dismissed').
+   *  Je jen informativní — bez akcí. „Znovu otevřít" by vrátilo neaktuální
+   *  znění vedle platného, proto ho zde záměrně nenabízíme. */
+  superseded?: boolean;
+}) {
   const w = WORDING[reminder.wording_type];
   const due = dueState(reminder.due_date);
   const open = reminder.status === "open" || reminder.status === "snoozed";
@@ -131,7 +141,11 @@ export function ReminderCard({ reminder }: { reminder: ReminderRow }) {
         </div>
 
         <div className="flex shrink-0 flex-col items-stretch gap-2 sm:items-end">
-          {open ? (
+          {superseded ? (
+            <span className="inline-flex items-center gap-1.5 text-xs text-muted">
+              <Archive size={13} /> nahrazeno novým zněním
+            </span>
+          ) : open ? (
             <>
               <form action={markDone}>
                 <input type="hidden" name="reminderId" value={reminder.id} />

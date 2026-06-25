@@ -340,12 +340,52 @@ function confidenceTone(c: number | string | null) {
   return "draft" as const;
 }
 
+// Datum z AI je ISO řetězec ("2025-06-01"); zobrazíme ho česky. Když to není
+// platné datum, vrátíme původní hodnotu (radši cokoli než prázdno nebo „Invalid").
+function fmtIsoDate(value: unknown): string | null {
+  if (typeof value !== "string" || !value.trim()) return null;
+  const t = Date.parse(value);
+  if (Number.isNaN(t)) return value.trim();
+  return new Date(t).toLocaleDateString("cs-CZ");
+}
+
+// Pole z návrhu zobrazujeme uhlazeně: kategorii přeložíme do češtiny, data
+// lokalizujeme, částku spojíme s měnou. `currency` se ukáže jen jako součást
+// částky (vlastní řádek „Měna" by byl nadbytečný), proto ho v mapě vynecháme.
+function formatField(
+  key: keyof DocExtraction,
+  data: DocExtraction,
+): string | null {
+  const value = data[key];
+  if (value === undefined || value === null || value === "") return null;
+
+  if (key === "category") {
+    const norm = normalizeCategory(value);
+    return norm ? CATEGORY_LABEL[norm] : String(value);
+  }
+  if (key === "date" || key === "warranty_until") {
+    return fmtIsoDate(value);
+  }
+  if (key === "amount") {
+    const n = typeof value === "number" ? value : Number(value);
+    if (!Number.isFinite(n)) return String(value);
+    const formatted = new Intl.NumberFormat("cs-CZ").format(n);
+    const currency =
+      typeof data.currency === "string" && data.currency.trim()
+        ? ` ${data.currency.trim()}`
+        : "";
+    return `${formatted}${currency}`;
+  }
+  return String(value);
+}
+
+// „Měna" nemá vlastní řádek — je už součástí „Částka". Ostatní pole v pořadí,
+// v jakém je chceme číst (od identifikace dokladu po shrnutí).
 const FIELD_LABELS: { key: keyof DocExtraction; label: string }[] = [
   { key: "category", label: "Kategorie" },
   { key: "supplier", label: "Dodavatel" },
   { key: "date", label: "Datum" },
   { key: "amount", label: "Částka" },
-  { key: "currency", label: "Měna" },
   { key: "warranty_until", label: "Záruka do" },
   { key: "inspection_no", label: "Číslo revize" },
   { key: "summary", label: "Shrnutí" },
@@ -505,18 +545,35 @@ export default async function DokumentDetailPage({
                   </Badge>
                 </div>
 
-                <dl className="divide-y divide-line">
-                  {FIELD_LABELS.map(({ key, label }) => {
-                    const value = latest.extracted?.[key];
-                    if (value === undefined || value === null || value === "") return null;
+                {(() => {
+                  const rows = FIELD_LABELS.map(({ key, label }) => ({
+                    label,
+                    display: latest.extracted
+                      ? formatField(key, latest.extracted)
+                      : null,
+                  })).filter((r) => r.display);
+                  // AI mohla vrátit prázdno (nečitelný sken, jen confidence). Místo
+                  // prázdného seznamu to řekneme narovinu a nabídneme nový pokus.
+                  if (rows.length === 0) {
                     return (
-                      <div key={key} className="flex gap-4 py-2.5">
-                        <dt className="w-32 shrink-0 text-sm text-muted">{label}</dt>
-                        <dd className="min-w-0 flex-1 text-sm text-ink">{String(value)}</dd>
-                      </div>
+                      <p className="text-sm text-muted">
+                        Z tohoto dokumentu se nepodařilo vyčíst žádná konkrétní data —
+                        sken může být nečitelný nebo dokument neobsahuje rozpoznatelné
+                        položky. Můžete návrh odmítnout a vytvořit nový.
+                      </p>
                     );
-                  })}
-                </dl>
+                  }
+                  return (
+                    <dl className="divide-y divide-line">
+                      {rows.map((r) => (
+                        <div key={r.label} className="flex gap-4 py-2.5">
+                          <dt className="w-32 shrink-0 text-sm text-muted">{r.label}</dt>
+                          <dd className="min-w-0 flex-1 text-sm text-ink">{r.display}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                  );
+                })()}
 
                 <p className="mt-4 rounded-md bg-surface-2 px-3 py-2 text-xs text-muted">
                   Toto je automatický návrh. Zkontrolujte hodnoty a potvrďte je, nebo

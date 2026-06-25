@@ -66,7 +66,6 @@ export default async function PrehledPage() {
   let docCount = 0;
   let openReminders = 0;
   let assetCount = 0;
-  let passportSections = 0;
   let attention: AttentionItem[] = [];
   let overdueCount = 0;
   let contextReady = false;
@@ -86,7 +85,7 @@ export default async function PrehledPage() {
     // ne true — takže napočítáme jen to, co už skutečně hoří.
     const todayIso = new Date().toISOString().slice(0, 10);
 
-    const [docs, reminders, assets, sections, dueSoon, overdue, ctx] =
+    const [docs, reminders, assets, dueSoon, overdue, ctx] =
       await Promise.all([
         sb
           .from("documents")
@@ -103,12 +102,6 @@ export default async function PrehledPage() {
           .from("assets")
           .select("id", { count: "exact", head: true })
           .eq("household_id", householdId),
-        propertyId
-          ? sb
-              .from("passport_sections")
-              .select("id", { count: "exact", head: true })
-              .eq("property_id", propertyId)
-          : Promise.resolve({ count: 0 } as { count: number }),
         // Nejbližší otevřené připomínky pro sekci "Vyžaduje pozornost".
         // Bez termínu řadíme nakonec (nulls last), aby nahoře byly skutečné termíny.
         sb
@@ -147,7 +140,6 @@ export default async function PrehledPage() {
     docCount = docs.count ?? 0;
     openReminders = reminders.count ?? 0;
     assetCount = assets.count ?? 0;
-    passportSections = (sections as { count: number | null }).count ?? 0;
     attention = (dueSoon as { data: AttentionItem[] | null }).data ?? [];
     overdueCount = (overdue as { count: number | null }).count ?? 0;
     const ctxRow = (
@@ -171,29 +163,43 @@ export default async function PrehledPage() {
 
   const hasProperty = Boolean(propertyId);
 
-  // Poctivé znění stavu pasu. Tón odpovídá významu, nikdy nehrozí sankcí.
+  // Stav pasu = poctivá připravenost odvozená z reálných kroků, které uživatel
+  // opravdu udělá (a které tu už načítáme): založení nemovitosti, vyplnění
+  // kontextu užívání, první dokument, první položka majetku. Záměrně NEpočítáme
+  // řádky passport_sections — ty se zatím nikde nezapisují, takže by tón navždy
+  // uvázl na nule a stav „Připraven“ by byl nedosažitelný. Tóny odpovídají
+  // významu (parchment → honey → teal) a nikdy nehrozí sankcí.
+  const milestones = hasProperty
+    ? [contextReady, docCount > 0, assetCount > 0]
+    : [];
+  const doneMilestones = milestones.filter(Boolean).length;
+  // +1 za samotné založení nemovitosti, aby krok „máte nemovitost“ nebyl zdarma
+  // schovaný — celkem 4 kroky (nemovitost + kontext + dokument + majetek).
+  const passportScore = hasProperty ? doneMilestones + 1 : 0;
+  const passportTotal = 4;
+
   const passport: { label: string; tone: StatTone; hint: string } = !hasProperty
     ? {
         label: "Nezaložen",
         tone: "recommended",
         hint: "Založte nemovitost",
       }
-    : passportSections === 0
+    : passportScore >= passportTotal
       ? {
-          label: "Rozpracovaný",
-          tone: "recommended",
-          hint: "Zatím žádné sekce pasu",
+          label: "Připraven",
+          tone: "verified",
+          hint: "Vše hotové k předání",
         }
-      : passportSections < 4
+      : passportScore >= 2
         ? {
             label: "Rozpracovaný",
             tone: "insurance_recommended",
-            hint: `${passportSections} ${plural(passportSections, "vyplněná sekce", "vyplněné sekce", "vyplněných sekcí")}`,
+            hint: `${passportScore} ze ${passportTotal} kroků hotovo`,
           }
         : {
-            label: "Připraven",
-            tone: "verified",
-            hint: `${passportSections} ${plural(passportSections, "vyplněná sekce", "vyplněné sekce", "vyplněných sekcí")}`,
+            label: "Začínáme",
+            tone: "recommended",
+            hint: `${passportScore} ze ${passportTotal} kroků hotovo`,
           };
 
   const cards = [

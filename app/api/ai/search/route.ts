@@ -136,15 +136,16 @@ export async function POST(request: Request) {
   // --- 2) Fallback A: textové hledání přímo nad embeddings.chunk_text --------
   // Spustí se, když embeddings (úryvky textu) existují, ale sémantika nedala
   // výsledek (např. výpadek embedovacího modelu) — dáme RAG kroku aspoň skutečný
-  // obsah dokumentů podle shody v textu, ne jen názvy.
+  // obsah dokumentů. Hledáme po KLÍČOVÝCH SLOVECH (OR), ne podle celé věty:
+  // přirozený dotaz se v textu zřídka vyskytne doslova, ale jednotlivá slova ano.
   if (chunks.length === 0 && hasEmbeddings) {
-    const like = ilikePattern(query);
-    if (like) {
+    const orFilter = orIlikeFilter(["chunk_text"], query);
+    if (orFilter) {
       const { data: rows } = await sb
         .from("embeddings")
         .select("id, document_id, asset_id, chunk_text, metadata")
         .eq("household_id", householdId)
-        .ilike("chunk_text", like)
+        .or(orFilter)
         .limit(MAX_CHUNKS);
       chunks = (rows ?? [])
         .map((r) => rowToChunk(r as EmbeddingMatch))
@@ -236,14 +237,59 @@ type EmbeddingMatch = {
 
 type SupaClient = Awaited<ReturnType<typeof createClient>>;
 
-// Vytvoř bezpečný ILIKE vzor: escapuj zástupné znaky a odstraň znaky, které
-// rozbíjejí PostgREST `.or(...)` filtr (čárky a závorky fungují jako oddělovače).
-function ilikePattern(q: string): string | null {
-  const safe = q
+// Časté české zájmena/spojky/předložky, které nenesou význam a v ILIKE by jen
+// chytaly náhodné shody. Držíme krátký, ruční seznam — pro MVP plně stačí.
+const STOPWORDS = new Set([
+  "kdy","kde","kolik","jaký","jaká","jaké","jak","mám","mam","mi","mě","me",
+  "moje","můj","muj","má","ma","mé","me","můžu","muzu","prosím","prosim",
+  "ve","va","na","do","od","pro","při","pri","ze","za","the","and",
+  "končí","konci","stál","stal","stojí","stoji","jsou","byl","byla","bylo",
+]);
+
+// Rozlož dotaz na významová klíčová slova (≥3 znaky, bez stopwords, bez duplicit).
+// Diakritiku NEodstraňujeme — data jsou v ČJ s diakritikou, ILIKE porovnává 1:1.
+function queryTerms(q: string): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of q.toLowerCase().split(/[^\p{L}\p{N}]+/u)) {
+    const t = raw.trim();
+    if (t.length < 3 || STOPWORDS.has(t) || seen.has(t)) continue;
+    seen.add(t);
+    out.push(t);
+    if (out.length >= 8) break; // strop, ať .or(...) filtr nepřeroste únosnou délku
+  }
+  return out;
+}
+
+// Escapuj jeden term pro bezpečné vložení do ILIKE i do PostgREST `.or(...)`:
+// zástupné znaky %_\\ escapujeme, oddělovače filtru (čárky/závorky) zahodíme.
+function safeTerm(t: string): string {
+  return t
     .replace(/[%_\\]/g, (m) => `\\${m}`)
     .replace(/[(),]/g, " ")
     .trim();
+}
+
+// Vytvoř bezpečný ILIKE vzor z CELÉHO dotazu (escapuje znaky, sjednotí mezery).
+// Hodí se tam, kde chceme hledat doslovnou frázi (dlouhý text).
+function ilikePattern(q: string): string | null {
+  const safe = safeTerm(q);
   return safe ? `%${safe}%` : null;
+}
+
+// Sestav PostgREST `.or(...)` filtr: každý sloupec × každý významový term jako
+// `col.ilike.%term%`, spojené přes OR. Když dotaz nemá použitelná slova,
+// propadneme na jednu doslovnou frázi (lepší než nehledat vůbec).
+// Vrací null jen tehdy, když opravdu není podle čeho hledat.
+function orIlikeFilter(columns: string[], q: string): string | null {
+  const terms = queryTerms(q).map(safeTerm).filter(Boolean);
+  const list = terms.length > 0 ? terms : [safeTerm(q)].filter(Boolean);
+  if (list.length === 0) return null;
+  const clauses: string[] = [];
+  for (const col of columns) {
+    for (const t of list) clauses.push(`${col}.ilike.%${t}%`);
+  }
+  return clauses.length ? clauses.join(",") : null;
 }
 
 // Textový fallback nad documents (+ výtahy z extrakcí) a assets.
@@ -252,24 +298,27 @@ async function textSearch(
   householdId: string,
   query: string,
 ): Promise<Chunk[]> {
-  const like = ilikePattern(query);
-  if (!like) return [];
+  const terms = queryTerms(query);
+  // Filtry stavíme po klíčových slovech (OR) — přirozený dotaz se v názvu zřídka
+  // vyskytne doslova, ale jednotlivá slova (komín, pračka, plyn) ano.
+  const docFilter = orIlikeFilter(["title"], query);
+  const assetFilter = orIlikeFilter(["name", "brand", "model", "room"], query);
+  const reminderFilter = orIlikeFilter(["title"], query);
+  if (!docFilter && !assetFilter && !reminderFilter) return [];
+
   const half = Math.ceil(MAX_CHUNKS / 2);
-  // Klíčová slova dotazu (≥3 znaky) pro relevanci výtahů z extrakcí.
-  const terms = query
-    .toLowerCase()
-    .split(/[^\p{L}\p{N}]+/u)
-    .filter((t) => t.length >= 3);
   const out: Chunk[] = [];
   const seenDocs = new Set<string>();
 
   const [docsRes, extrRes, assetsRes, remindersRes] = await Promise.all([
-    sb
-      .from("documents")
-      .select("id, title, category")
-      .eq("household_id", householdId)
-      .ilike("title", like)
-      .limit(half),
+    docFilter
+      ? sb
+          .from("documents")
+          .select("id, title, category")
+          .eq("household_id", householdId)
+          .or(docFilter)
+          .limit(half)
+      : Promise.resolve({ data: [] as DocRow[] }),
     // Výtahy z dokumentů (souhrn) — sem se ukládá AI extrakce s reálným obsahem.
     // Bereme jen potvrzené (uživatel je odsouhlasil) a od nejnovějších. Relevanci
     // dle dotazu vyhodnotíme níže v JS (extracted je jsonb), proto si bereme širší
@@ -281,31 +330,32 @@ async function textSearch(
       .eq("status", "confirmed")
       .order("created_at", { ascending: false })
       .limit(EXTRACTION_CANDIDATES),
-    sb
-      .from("assets")
-      .select("id, name, brand, model, room, category")
-      .eq("household_id", householdId)
-      // pole spojíme přes OR; vzor `like` je už zbavený čárek a závorek.
-      .or(
-        `name.ilike.${like},brand.ilike.${like},model.ilike.${like},room.ilike.${like}`,
-      )
-      .limit(half),
+    assetFilter
+      ? sb
+          .from("assets")
+          .select("id, name, brand, model, room, category")
+          .eq("household_id", householdId)
+          .or(assetFilter)
+          .limit(half)
+      : Promise.resolve({ data: [] as AssetRow[] }),
     // Otevřené připomínky (revize, záruky, servis) — odpovídají na „kdy mám…",
-    // „mám revizi…". Wording si neseme čestně dle wording_type (viz remindersToChunks).
-    sb
-      .from("reminders")
-      .select("id, type, title, due_date, wording_type, legal_basis, status")
-      .eq("household_id", householdId)
-      .eq("status", "open")
-      .ilike("title", like)
-      .limit(half),
+    // „mám revizi…". Wording si neseme čestně dle wording_type (viz reminderToChunk).
+    reminderFilter
+      ? sb
+          .from("reminders")
+          .select("id, type, title, due_date, wording_type, legal_basis, status")
+          .eq("household_id", householdId)
+          .eq("status", "open")
+          .or(reminderFilter)
+          .limit(half)
+      : Promise.resolve({ data: [] as ReminderRow[] }),
   ]);
 
   // Pořadí dle bohatosti obsahu: extrakce (reálná data z dokumentů) → připomínky
   // → dokumenty podle názvu → majetek. Při ořezu na MAX_CHUNKS tak zůstanou
   // nejvíce odpovídající úryvky, ne jen shody v názvu.
   let extractionHits = 0;
-  for (const e of extrRes.data ?? []) {
+  for (const e of (extrRes.data ?? []) as ExtractionRow[]) {
     // Z širšího okna kandidátů vybíráme nejvýše EXTRACTION_MAX relevantních výtahů,
     // ať extrakce nezaberou celý výsledek a zůstane místo na připomínky/majetek.
     if (extractionHits >= EXTRACTION_MAX) break;
@@ -318,10 +368,11 @@ async function textSearch(
     if (!docId || seenDocs.has(docId)) continue;
     const summary = summarizeExtraction(e.extracted);
     if (!summary) continue;
-    // Relevance: zařaď výtah jen pokud obsahuje aspoň jedno klíčové slovo dotazu
-    // (nebo dotaz nemá žádné delší slovo). Jinak bychom do RAG cpali náhodné dokumenty.
+    // Relevance: zařaď výtah jen pokud jeho text (souhrn) NEBO název dokumentu
+    // obsahuje aspoň jedno klíčové slovo dotazu (nebo dotaz nemá žádné delší slovo).
+    // Jinak bychom do RAG cpali náhodné dokumenty.
     if (terms.length > 0) {
-      const hay = summary.toLowerCase();
+      const hay = `${summary} ${doc?.title ?? ""}`.toLowerCase();
       if (!terms.some((t) => hay.includes(t))) continue;
     }
     seenDocs.add(docId);
@@ -338,7 +389,7 @@ async function textSearch(
     out.push(reminderToChunk(r));
   }
 
-  for (const d of docsRes.data ?? []) {
+  for (const d of (docsRes.data ?? []) as DocRow[]) {
     if (seenDocs.has(d.id)) continue;
     seenDocs.add(d.id);
     const title = d.title ?? "Dokument";
@@ -349,7 +400,7 @@ async function textSearch(
     });
   }
 
-  for (const a of assetsRes.data ?? []) {
+  for (const a of (assetsRes.data ?? []) as AssetRow[]) {
     const parts = [a.brand, a.model, a.room ? `místnost ${a.room}` : null]
       .filter(Boolean)
       .join(", ");
@@ -362,6 +413,22 @@ async function textSearch(
 
   return out.slice(0, MAX_CHUNKS);
 }
+
+type DocRow = { id: string; title: string | null; category: string };
+type AssetRow = {
+  id: string;
+  name: string;
+  brand: string | null;
+  model: string | null;
+  room: string | null;
+  category: string | null;
+};
+type ExtractionRow = {
+  document_id: string | null;
+  extracted: unknown;
+  created_at: string;
+  documents?: unknown;
+};
 
 // Připomínka → citovatelný úryvek. Wording neseme ČESTNĚ dle wording_type:
 // jen 'legal_required' smí znít jako povinnost ze zákona. Tím dáme RAG kroku

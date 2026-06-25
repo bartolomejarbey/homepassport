@@ -168,3 +168,87 @@ export async function updatePropertyContext(input: unknown): Promise<UpdateConte
   revalidatePath(`/nemovitost/${property_id}/kontext`);
   return { ok: true };
 }
+
+// ---------- update property identity (title / type / address / cadastre / status) ----------
+// The passport's own identity fields stay editable after founding — at creation we
+// only collect the essentials, and cadastral_id isn't captured there at all even
+// though the detail header shows it. This action backs the inline "Upravit údaje"
+// form on the detail page so the passport is a living record, not a one-shot insert.
+const updateSchema = z
+  .object({
+    id: z.string().uuid(),
+    type: z.enum(["house", "apartment", "unit", "land", "commercial"]),
+    title: z.string().trim().max(120).optional().or(z.literal("")),
+    street: z.string().trim().max(160).optional().or(z.literal("")),
+    city: z.string().trim().max(120).optional().or(z.literal("")),
+    postal_code: z.string().trim().max(20).optional().or(z.literal("")),
+    cadastral_id: z.string().trim().max(40).optional().or(z.literal("")),
+    // 'transferred' is system-driven by a completed handover, never set by hand,
+    // so we deliberately exclude it from manual control to keep status honest.
+    status: z.enum(["draft", "active", "archived"]),
+  })
+  .strict();
+
+export type UpdatePropertyResult = { ok: false; error: string } | { ok: true };
+
+export async function updateProperty(input: unknown): Promise<UpdatePropertyResult> {
+  const parsed = updateSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: "Zkontrolujte prosím vyplněné údaje." };
+  }
+  const { id, ...fields } = parsed.data;
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return { ok: false, error: "Nejste přihlášeni." };
+
+  const clean = (v?: string) => {
+    const t = (v ?? "").trim();
+    return t.length ? t : null;
+  };
+
+  // RLS (prop_access / can_access_property) gates the update to owners (and linked
+  // orgs) only — the owner link already exists by now, so the RLS-respecting client
+  // is enough; no service role needed.
+  const { data: updated, error } = await sb
+    .from("properties")
+    .update({
+      type: fields.type,
+      title: clean(fields.title),
+      street: clean(fields.street),
+      city: clean(fields.city),
+      postal_code: clean(fields.postal_code),
+      cadastral_id: clean(fields.cadastral_id),
+      status: fields.status,
+    })
+    .eq("id", id)
+    .select("id")
+    .maybeSingle();
+
+  if (error || !updated) {
+    return { ok: false, error: "Změny se nepodařilo uložit. Zkuste to prosím znovu." };
+  }
+
+  // Household scope for the audit trail (a property may be co-owned; first link is fine).
+  const { data: ownerLink } = await sb
+    .from("property_owners")
+    .select("household_id")
+    .eq("property_id", id)
+    .limit(1)
+    .maybeSingle();
+
+  // audit_events má jen SELECT policy (RLS); zápis proto vede přes service role.
+  await createAdminClient().from("audit_events").insert({
+    actor_id: user.id,
+    household_id: ownerLink?.household_id ?? null,
+    property_id: id,
+    action: "property.updated",
+    target: { status: fields.status, type: fields.type },
+  });
+
+  revalidatePath("/nemovitost");
+  revalidatePath(`/nemovitost/${id}`);
+  return { ok: true };
+}
