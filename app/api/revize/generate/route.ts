@@ -61,6 +61,22 @@ export async function POST(request: Request) {
 
   const ctx = ctxRow as PropertyContext;
 
+  // Poctivost: bez vyplněného způsobu užívání bychom slepě spadli do
+  // owner_occupied (fallback v activeUsage) a vygenerovali revize pro režim,
+  // který uživatel nikdy nepotvrdil. Stejně jako detail nemovitosti považujeme
+  // kontext za vyplněný, až když je aspoň jeden režim užívání zaškrtnutý.
+  const usageSet =
+    ctx.owner_occupied || ctx.rental || ctx.svj || ctx.business_use;
+  if (!usageSet) {
+    return NextResponse.json(
+      {
+        error:
+          "Nejdřív vyplňte způsob užívání nemovitosti (vlastní bydlení / pronájem / SVJ / podnikání). Podle něj poctivě určíme, co je povinné a co jen doporučené.",
+      },
+      { status: 409 },
+    );
+  }
+
   // Typ nemovitosti (house/apartment/…) potřebujeme k výběru správného pravidla.
   // Pravidla revizí jsou seedovaná zvlášť pro 'house' i 'apartment', takže bez
   // filtru na typ by stejný systém (např. komín) vygeneroval dvě připomínky.

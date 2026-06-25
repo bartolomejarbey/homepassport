@@ -131,7 +131,21 @@ export async function POST(request: Request) {
     return fail("nohousehold", "Nemáte založenou domácnost. Obnovte prosím stránku.", 409);
   }
 
-  // 5) Pozvánku claimni ATOMICKY jako úplně první zápis (update jen z 'pending').
+  // 5) Pas má jediného nabyvatele: pokud ho už vlastní CIZÍ domácnost (starý/hraniční
+  //    token, ručně podvržený claim), odmítni JEŠTĚ PŘED claimem pozvánky — tak ji
+  //    zbytečně „nespotřebujeme" a hlavně nikdy nevlijeme přenosné dokumenty do druhé
+  //    domácnosti. Vlastní existující vazba (idempotentní re-accept) projde a tok se
+  //    jen dotáhne.
+  const { data: owners } = await admin
+    .from("property_owners")
+    .select("household_id")
+    .eq("property_id", invitation.property_id);
+  const foreignOwner = (owners ?? []).some((o) => o.household_id !== householdId);
+  if (foreignOwner) {
+    return fail("taken", "Tuto nemovitost už převzala jiná domácnost.", 409);
+  }
+
+  // 6) Pozvánku claimni ATOMICKY jako úplně první zápis (update jen z 'pending').
   //    Tím se souběh vyřeší dřív, než cokoli přesuneme: případný "poražený"
   //    request se zde zastaví a nesáhne na property_owners ani na úložiště.
   //    Idempotentní re-accept tímtéž uživatelem claim přeskočí (už ho vlastní)
@@ -156,7 +170,7 @@ export async function POST(request: Request) {
     }
   }
 
-  // 6) Propoj nemovitost s domácností kupujícího (přenosná vrstva přechází).
+  // 7) Propoj nemovitost s domácností kupujícího (přenosná vrstva přechází).
   //    onConflict: kdyby vazba náhodou existovala, převzetí proběhne idempotentně.
   const { error: linkErr } = await admin
     .from("property_owners")
@@ -168,7 +182,7 @@ export async function POST(request: Request) {
     return fail("failed", "Nemovitost se nepodařilo přiřadit k vaší domácnosti.", 500);
   }
 
-  // 7) Přenosné dokumenty přesměruj do domácnosti kupujícího.
+  // 8) Přenosné dokumenty přesměruj do domácnosti kupujícího.
   //
   //     Storage RLS (storage_household_ok) hlídá přístup podle PRVNÍHO segmentu
   //     cesty = <household_id>. Přenosné soubory byly nahrány pod household
@@ -244,13 +258,13 @@ export async function POST(request: Request) {
     if (updErr) moveFailures.push({ id: doc.id, error: updErr.message });
   }
 
-  // 8) Nemovitost -> active (z draft / transferred po předchozím prodeji).
+  // 9) Nemovitost -> active (z draft / transferred po předchozím prodeji).
   await admin
     .from("properties")
     .update({ status: "active" })
     .eq("id", invitation.property_id);
 
-  // 9) Audit: kdo, kdy, co převzal. Zaznamenáme i počet přenesených dokumentů
+  // 10) Audit: kdo, kdy, co převzal. Zaznamenáme i počet přenesených dokumentů
   //    a případná dílčí selhání přesunu souborů (pro pozdější dohledání).
   await admin.from("audit_events").insert({
     actor_id: user.id,

@@ -39,6 +39,11 @@ export function AuthForm({ mode, next }: { mode: Mode; next?: string }) {
   });
 
   const destination = safeNextPath(next);
+  // Preserve ?next when switching between the login and signup screens, so a user
+  // who arrived via a deep link (e.g. /prevzit/<token>) still bounces back there
+  // after authenticating instead of landing on the default /prehled.
+  const loginHref = next ? { pathname: "/prihlaseni", query: { next } } : "/prihlaseni";
+  const signupHref = next ? { pathname: "/registrace", query: { next } } : "/registrace";
 
   async function onSubmit(values: FormValues) {
     setServerError(null);
@@ -171,14 +176,14 @@ export function AuthForm({ mode, next }: { mode: Mode; next?: string }) {
         {isSignup ? (
           <>
             Už máte účet?{" "}
-            <Link href="/prihlaseni" className="font-medium text-navy hover:underline">
+            <Link href={loginHref} className="font-medium text-navy hover:underline">
               Přihlásit se
             </Link>
           </>
         ) : (
           <>
             Nemáte účet?{" "}
-            <Link href="/registrace" className="font-medium text-navy hover:underline">
+            <Link href={signupHref} className="font-medium text-navy hover:underline">
               Vytvořit účet
             </Link>
           </>

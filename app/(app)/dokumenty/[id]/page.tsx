@@ -4,12 +4,13 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { ArrowLeft, ExternalLink, Sparkles, CheckCircle2, XCircle, RefreshCw } from "lucide-react";
+import { ArrowLeft, ExternalLink, Sparkles, CheckCircle2, XCircle, RefreshCw, Building2, BellRing } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { extractDocument, type DocExtraction } from "@/lib/ai";
+import { propertyName } from "../../nemovitost/_components/PropertyMeta";
 import { DeleteDocumentButton } from "../_components/DeleteDocumentButton";
 
 export const metadata = { title: "Dokument — Home Passport" };
@@ -332,11 +333,20 @@ export default async function DokumentDetailPage({
 
   const { data: doc } = await sb
     .from("documents")
-    .select("id, title, category, transferable, mime, file_path, created_at")
+    .select(
+      "id, title, category, transferable, mime, file_path, created_at, property_id, properties(id, title, type, street, city)",
+    )
     .eq("id", id)
     .maybeSingle();
 
   if (!doc) notFound();
+
+  // Vnořená nemovitost přijde jako pole (embed). RLS zaručí, že ji vidíme jen
+  // pokud k ní máme přístup — jinak je null a propojení prostě nezobrazíme.
+  const propRaw = Array.isArray(doc.properties) ? doc.properties[0] : doc.properties;
+  const linkedProperty =
+    (propRaw as { id: string; title: string | null; type: string; street: string | null; city: string | null } | null) ??
+    null;
 
   // Podepsaná URL (TTL 1 h) — nikdy nevystavujeme syrovou cestu v úložišti.
   const { data: signed } = await sb.storage
@@ -372,6 +382,14 @@ export default async function DokumentDetailPage({
           <p className="mt-1 text-sm text-muted">
             Nahráno {new Date(doc.created_at).toLocaleDateString("cs-CZ")}
           </p>
+          {linkedProperty && (
+            <Link
+              href={`/nemovitost/${linkedProperty.id}`}
+              className="mt-2 inline-flex items-center gap-1.5 text-sm font-medium text-navy transition-colors hover:underline"
+            >
+              <Building2 size={14} /> {propertyName(linkedProperty)}
+            </Link>
+          )}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {doc.transferable && <Badge tone="recommended">K nemovitosti</Badge>}
@@ -474,7 +492,11 @@ export default async function DokumentDetailPage({
                   Toto je automatický návrh. Zkontrolujte hodnoty a potvrďte je, nebo
                   návrh odmítněte. Pokud dokument obsahuje budoucí konec záruky, potvrzením
                   se k němu založí připomínka. U revizní zprávy termín další revize plyne
-                  z kontextu nemovitosti — spočítáte ho v sekci Připomínky.
+                  z kontextu nemovitosti — spočítáte ho v sekci{" "}
+                  <Link href="/pripominky" className="font-medium text-navy hover:underline">
+                    Připomínky
+                  </Link>
+                  .
                 </p>
 
                 {latest.status === "draft" && (
@@ -492,6 +514,20 @@ export default async function DokumentDetailPage({
                         <XCircle size={15} /> Odmítnout
                       </Button>
                     </form>
+                  </div>
+                )}
+
+                {latest.status === "confirmed" && (
+                  <div className="mt-4 flex flex-wrap items-center gap-2">
+                    <p className="flex items-center gap-1.5 text-sm text-teal">
+                      <CheckCircle2 size={15} /> Data jste potvrdili.
+                    </p>
+                    <Link
+                      href="/pripominky"
+                      className="inline-flex items-center gap-1.5 text-sm font-medium text-navy hover:underline"
+                    >
+                      <BellRing size={14} /> Přejít na připomínky
+                    </Link>
                   </div>
                 )}
 

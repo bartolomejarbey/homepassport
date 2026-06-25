@@ -12,6 +12,7 @@ import {
   Search,
   ArrowRight,
   Plus,
+  CalendarClock,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 import { Card } from "@/components/ui/Card";
@@ -79,55 +80,57 @@ export default async function PrehledPage() {
       .maybeSingle();
     propertyId = ownerLink?.property_id ?? null;
 
-    const [docs, reminders, assets, sections, dueSoon] = await Promise.all([
-      sb
-        .from("documents")
-        .select("id", { count: "exact", head: true })
-        .eq("household_id", householdId),
-      // "Otevřené" = open i snoozed — stejně, jako je seskupuje stránka /pripominky,
-      // aby číslo na dlaždici sedělo s tím, co uživatel po prokliku uvidí.
-      sb
-        .from("reminders")
-        .select("id", { count: "exact", head: true })
-        .eq("household_id", householdId)
-        .in("status", ["open", "snoozed"]),
-      sb
-        .from("assets")
-        .select("id", { count: "exact", head: true })
-        .eq("household_id", householdId),
-      propertyId
-        ? sb
-            .from("passport_sections")
-            .select("id", { count: "exact", head: true })
-            .eq("property_id", propertyId)
-        : Promise.resolve({ count: 0 } as { count: number }),
-      // Nejbližší otevřené připomínky pro sekci "Vyžaduje pozornost".
-      // Bez termínu řadíme nakonec (nulls last), aby nahoře byly skutečné termíny.
-      sb
-        .from("reminders")
-        .select("id, title, due_date, wording_type")
-        .eq("household_id", householdId)
-        .in("status", ["open", "snoozed"])
-        .order("due_date", { ascending: true, nullsFirst: false })
-        .limit(3),
-    ]);
+    // Po termínu = otevřené připomínky s termínem v minulosti. Rows s prázdným
+    // termínem (due_date IS NULL) sem v SQL nespadnou — porovnání s NULL je NULL,
+    // ne true — takže napočítáme jen to, co už skutečně hoří.
+    const todayIso = new Date().toISOString().slice(0, 10);
+
+    const [docs, reminders, assets, sections, dueSoon, overdue] =
+      await Promise.all([
+        sb
+          .from("documents")
+          .select("id", { count: "exact", head: true })
+          .eq("household_id", householdId),
+        // "Otevřené" = open i snoozed — stejně, jako je seskupuje stránka /pripominky,
+        // aby číslo na dlaždici sedělo s tím, co uživatel po prokliku uvidí.
+        sb
+          .from("reminders")
+          .select("id", { count: "exact", head: true })
+          .eq("household_id", householdId)
+          .in("status", ["open", "snoozed"]),
+        sb
+          .from("assets")
+          .select("id", { count: "exact", head: true })
+          .eq("household_id", householdId),
+        propertyId
+          ? sb
+              .from("passport_sections")
+              .select("id", { count: "exact", head: true })
+              .eq("property_id", propertyId)
+          : Promise.resolve({ count: 0 } as { count: number }),
+        // Nejbližší otevřené připomínky pro sekci "Vyžaduje pozornost".
+        // Bez termínu řadíme nakonec (nulls last), aby nahoře byly skutečné termíny.
+        sb
+          .from("reminders")
+          .select("id, title, due_date, wording_type")
+          .eq("household_id", householdId)
+          .in("status", ["open", "snoozed"])
+          .order("due_date", { ascending: true, nullsFirst: false })
+          .limit(3),
+        sb
+          .from("reminders")
+          .select("id", { count: "exact", head: true })
+          .eq("household_id", householdId)
+          .in("status", ["open", "snoozed"])
+          .lt("due_date", todayIso),
+      ]);
 
     docCount = docs.count ?? 0;
     openReminders = reminders.count ?? 0;
     assetCount = assets.count ?? 0;
     passportSections = (sections as { count: number | null }).count ?? 0;
-    attention = ((dueSoon as { data: AttentionItem[] | null }).data ?? []);
-
-    // Po termínu = otevřené připomínky s termínem v minulosti (počítáme zvlášť,
-    // abychom na dlaždici upozornili na to, co už hoří).
-    const todayIso = new Date().toISOString().slice(0, 10);
-    const { count: overdue } = await sb
-      .from("reminders")
-      .select("id", { count: "exact", head: true })
-      .eq("household_id", householdId)
-      .in("status", ["open", "snoozed"])
-      .lt("due_date", todayIso);
-    overdueCount = overdue ?? 0;
+    attention = (dueSoon as { data: AttentionItem[] | null }).data ?? [];
+    overdueCount = (overdue as { count: number | null }).count ?? 0;
   }
 
   const hasProperty = Boolean(propertyId);
@@ -189,6 +192,14 @@ export default async function PrehledPage() {
   // Rychlé akce — vždy míří na existující trasy. Cíl nemovitosti se přizpůsobí,
   // zda už nějakou máte (detail vs. seznam se zakládáním).
   const passportHref = propertyId ? `/nemovitost/${propertyId}` : "/nemovitost";
+  const kontextHref = propertyId ? `/nemovitost/${propertyId}/kontext` : "/nemovitost";
+
+  // Druhý krok onboardingu: nemovitost už existuje, ale pas je zatím prázdný
+  // a žádné revize ještě nevznikly. Nejhodnotnější další krok je vyplnit kontext
+  // (komín / plyn / využití), protože z něj engine poctivě odvodí revize.
+  // Záměrně nic neslibujeme „ze zákona“ — to řeší až /pripominky dle wording_type.
+  const needsContext =
+    hasProperty && passportSections === 0 && openReminders === 0;
   // needsProperty: akce, které dávají smysl až po založení nemovitosti
   // (revize jsou vázané na konkrétní nemovitost a její využití). Ostatní akce
   // — nahrání dokumentu, přidání majetku fotkou, hledání — fungují i bez ní,
@@ -208,7 +219,7 @@ export default async function PrehledPage() {
     },
     {
       label: "Spočítat revize",
-      icon: BellRing,
+      icon: CalendarClock,
       href: "/pripominky",
       needsProperty: true,
     },
@@ -261,6 +272,35 @@ export default async function PrehledPage() {
             >
               <Plus size={16} />
               Založit nemovitost
+            </Link>
+          </div>
+        </Card>
+      )}
+
+      {needsContext && (
+        <Card className="border-honey/40 bg-honey-100/40">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-start gap-3">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-navy">
+                <CalendarClock size={20} className="text-honey" />
+              </span>
+              <div>
+                <p className="font-display text-base text-ink">
+                  Doplňte kontext nemovitosti
+                </p>
+                <p className="mt-1 max-w-prose text-sm text-ink-soft">
+                  Pár otázek o vytápění, plynu a způsobu užívání nám stačí, abychom
+                  vám sestavili připomínky revizí na míru — bez strašení paragrafy,
+                  jen to, co se vás opravdu týká.
+                </p>
+              </div>
+            </div>
+            <Link
+              href={kontextHref}
+              className="btn btn-primary shrink-0 self-start text-sm"
+            >
+              <ArrowRight size={16} />
+              Vyplnit kontext
             </Link>
           </div>
         </Card>

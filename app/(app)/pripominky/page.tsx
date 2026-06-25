@@ -29,6 +29,7 @@ export default async function PripominkyPage() {
   const householdId = membership?.household_id ?? null;
 
   let propertyId: string | null = null;
+  let contextReady = false;
   let reminders: ReminderRow[] = [];
 
   if (householdId) {
@@ -39,6 +40,21 @@ export default async function PripominkyPage() {
       .limit(1)
       .maybeSingle();
     propertyId = ownerLink?.property_id ?? null;
+
+    if (propertyId) {
+      // Kontext je „vyplněný“, až když je zaškrtnutý aspoň jeden způsob užívání —
+      // stejné kritérium jako na detailu nemovitosti. Bez něj by výpočet revizí
+      // slepě předpokládal vlastní bydlení (fallback v activeUsage).
+      const { data: ctx } = await sb
+        .from("property_contexts")
+        .select("owner_occupied, rental, svj, business_use")
+        .eq("property_id", propertyId)
+        .maybeSingle();
+      contextReady = !!(
+        ctx &&
+        (ctx.owner_occupied || ctx.rental || ctx.svj || ctx.business_use)
+      );
+    }
 
     const { data } = await sb
       .from("reminders")
@@ -84,7 +100,12 @@ export default async function PripominkyPage() {
             jen doporučená, nebo ji vyžaduje pojišťovna.
           </p>
         </div>
-        {propertyId && <GenerateRevizeButton propertyId={propertyId} />}
+        {propertyId && (
+          <GenerateRevizeButton
+            propertyId={propertyId}
+            contextReady={contextReady}
+          />
+        )}
       </header>
 
       {/* Legenda — co která barva znamená. */}
@@ -134,6 +155,28 @@ export default async function PripominkyPage() {
         </Card>
       ) : (
         <div className="space-y-8">
+          {!contextReady && (
+            <Card className="border-honey/40 bg-honey-100/40">
+              <p className="font-display text-base text-ink">
+                Doplňte způsob užívání nemovitosti
+              </p>
+              <p className="mt-1 text-sm text-ink-soft">
+                Než spočítáme revize, potřebujeme vědět, jak nemovitost užíváte
+                (vlastní bydlení, pronájem, SVJ, podnikání). Podle toho poctivě
+                odlišíme, co je{" "}
+                <strong className="font-medium text-ink">povinné ze zákona</strong>{" "}
+                a co jen doporučené. Vyplňte kontext v sekci{" "}
+                <Link
+                  href={`/nemovitost/${propertyId}/kontext`}
+                  className="font-medium text-honey-600 underline underline-offset-2"
+                >
+                  Nemovitost
+                </Link>
+                .
+              </p>
+            </Card>
+          )}
+
           <section className="space-y-3">
             <div className="flex items-center gap-2">
               <BellRing size={16} className="text-honey" />
@@ -146,7 +189,11 @@ export default async function PripominkyPage() {
             {openReminders.length === 0 ? (
               <EmptyState
                 title="Žádné otevřené připomínky"
-                hint="Spusťte výpočet revizí podle kontextu nemovitosti — navrhneme jen to, co se vás opravdu týká."
+                hint={
+                  contextReady
+                    ? 'Klikněte na „Spočítat revize“ — podle kontextu nemovitosti navrhneme jen to, co se vás opravdu týká.'
+                    : "Nejdřív vyplňte způsob užívání nemovitosti, pak podle něj spočítáme revize, které se vás týkají."
+                }
               />
             ) : (
               <div className="space-y-3">

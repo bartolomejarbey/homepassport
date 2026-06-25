@@ -69,6 +69,7 @@ export default async function NemovitostDetailPage({
     { count: transferableDocs },
     { count: privateDocs },
     { count: openReminders },
+    { count: propertyAssets },
   ] = await Promise.all([
     sb
       .from("property_contexts")
@@ -100,6 +101,12 @@ export default async function NemovitostDetailPage({
       .select("id", { count: "exact", head: true })
       .eq("property_id", id)
       .in("status", ["open", "snoozed"]),
+    // Movitý majetek (Home OS) navázaný na tuto nemovitost — soukromá vrstva.
+    // RLS (assets_access) omezí počet na položky domácnosti uživatele.
+    sb
+      .from("assets")
+      .select("id", { count: "exact", head: true })
+      .eq("property_id", id),
   ]);
 
   const sections = (sectionsRaw ?? []) as PassportSectionRow[];
@@ -266,7 +273,7 @@ export default async function NemovitostDetailPage({
           <div className="mt-4 grid grid-cols-2 gap-3 border-t border-line pt-4">
             <Link
               href={`/dokumenty?property=${id}`}
-              className="group rounded-md border border-line bg-surface px-3 py-2.5 transition-colors hover:border-line"
+              className="group rounded-md border border-line bg-surface px-3 py-2.5 transition-colors hover:border-ink-soft/30"
             >
               <span className="flex items-center gap-1.5 text-xs text-muted">
                 <FileText size={13} />
@@ -284,15 +291,15 @@ export default async function NemovitostDetailPage({
             </Link>
             <Link
               href="/majetek"
-              className="group rounded-md border border-line bg-surface px-3 py-2.5 transition-colors hover:border-line"
+              className="group rounded-md border border-line bg-surface px-3 py-2.5 transition-colors hover:border-ink-soft/30"
             >
               <span className="flex items-center gap-1.5 text-xs text-muted">
                 <Package size={13} />
                 Movitý majetek
               </span>
               <span className="mt-0.5 flex items-center justify-between">
-                <span className="text-sm font-medium text-ink-soft">
-                  Spravovat
+                <span className="font-display text-lg font-semibold text-ink">
+                  {propertyAssets ?? 0}
                 </span>
                 <ChevronRight
                   size={15}

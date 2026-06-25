@@ -17,8 +17,87 @@ import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { ValueEstimator } from "../_components/ValueEstimator";
 import { DeleteAssetButton } from "../_components/DeleteAssetButton";
+import { EditAssetForm } from "../_components/EditAssetForm";
 
 export const metadata = { title: "Položka majetku — Home Passport" };
+
+// Povolené kategorie (musí odpovídat výběru v EditAssetForm). Cokoli mimo seznam
+// uložíme jako null, ať v evidenci nezůstávají smyšlené hodnoty.
+const ASSET_CATEGORIES = [
+  "Spotřebič",
+  "Elektronika",
+  "Nábytek",
+  "Nářadí",
+  "Kuchyně",
+  "Vytápění",
+  "Zahrada",
+  "Ostatní",
+];
+
+// Vrátí ořezaný text nebo null (prázdné → null). Zkrátí na rozumnou délku.
+function txt(v: FormDataEntryValue | null, max = 200): string | null {
+  if (typeof v !== "string") return null;
+  const t = v.trim();
+  return t ? t.slice(0, max) : null;
+}
+
+// Validní ISO datum (YYYY-MM-DD) z <input type="date">, jinak null.
+function dateOrNull(v: FormDataEntryValue | null): string | null {
+  if (typeof v !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return null;
+  const d = new Date(v);
+  return Number.isNaN(d.getTime()) ? null : v;
+}
+
+// Nezáporné číslo z text/number inputu, jinak null.
+function priceOrNull(v: FormDataEntryValue | null): number | null {
+  if (typeof v !== "string" || !v.trim()) return null;
+  const n = Number(v.replace(",", "."));
+  return Number.isFinite(n) && n >= 0 ? Math.round(n) : null;
+}
+
+// ---- server action: upravit položku ---------------------------------------
+// Zapíše opravené/doplněné údaje. RLS (assets_access) dovolí update jen u položky
+// vlastní domácnosti. Vstupy validujeme (datum, cena, kategorie) i přes RLS.
+async function updateAsset(assetId: string, formData: FormData) {
+  "use server";
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) redirect("/prihlaseni");
+
+  const name = txt(formData.get("name"));
+  if (!name) {
+    // Bez názvu neukládáme — vrátíme uživatele na detail beze změny.
+    redirect(`/majetek/${assetId}`);
+  }
+
+  const rawCategory = txt(formData.get("category"), 120);
+  const category =
+    rawCategory && ASSET_CATEGORIES.includes(rawCategory) ? rawCategory : null;
+
+  const { error } = await sb
+    .from("assets")
+    .update({
+      name,
+      category,
+      room: txt(formData.get("room"), 120),
+      brand: txt(formData.get("brand"), 120),
+      model: txt(formData.get("model"), 120),
+      serial: txt(formData.get("serial"), 120),
+      purchase_date: dateOrNull(formData.get("purchase_date")),
+      purchase_price: priceOrNull(formData.get("purchase_price")),
+      warranty_until: dateOrNull(formData.get("warranty_until")),
+    })
+    .eq("id", assetId);
+  if (error) {
+    redirect(`/majetek/${assetId}`);
+  }
+
+  revalidatePath("/majetek");
+  revalidatePath(`/majetek/${assetId}`);
+  redirect(`/majetek/${assetId}`);
+}
 
 // ---- server action: smazat položku ----------------------------------------
 // Smaže řádek assets (FK cascade odstraní asset_photos, documents.asset_id se
@@ -233,7 +312,9 @@ export default async function MajetekDetailPage({
             )}
 
             {meta.length === 0 ? (
-              <p className="text-sm text-muted">Žádné další údaje.</p>
+              <p className="text-sm text-muted">
+                Žádné další údaje. Doplňte je tlačítkem níže.
+              </p>
             ) : (
               <dl className="divide-y divide-line">
                 {meta.map(({ label, value }) => (
@@ -244,6 +325,23 @@ export default async function MajetekDetailPage({
                 ))}
               </dl>
             )}
+
+            <div className="mt-4 border-t border-line pt-4">
+              <EditAssetForm
+                action={updateAsset.bind(null, a.id)}
+                values={{
+                  name: a.name,
+                  category: a.category,
+                  room: a.room,
+                  brand: a.brand,
+                  model: a.model,
+                  serial: a.serial,
+                  purchase_date: a.purchase_date,
+                  purchase_price: a.purchase_price,
+                  warranty_until: a.warranty_until,
+                }}
+              />
+            </div>
           </div>
         </Card>
 

@@ -54,6 +54,31 @@ export async function POST(request: Request) {
     );
   }
 
+  // Pas, který už někdo převzal (accepted), nesmí jít vystavit znovu — jinak by
+  // šel předat DRUHÉMU kupujícímu a přenosné dokumenty by se vlily i do jeho
+  // domácnosti. UI dialog v tomto stavu skrývá, ale API musí tu smlouvu vynutit
+  // samo (org link přetrvává i po prodeji, takže can_access_property zůstává
+  // true). Čteme přes RLS klienta — org member na pozvánky vidí přes handover_access.
+  const { data: acceptedRows, error: acceptedErr } = await sb
+    .from("handover_invitations")
+    .select("id")
+    .eq("property_id", parsed.propertyId)
+    .eq("status", "accepted")
+    .limit(1);
+
+  if (acceptedErr) {
+    return NextResponse.json(
+      { error: "Stav předání se nepodařilo ověřit." },
+      { status: 500 },
+    );
+  }
+  if (acceptedRows && acceptedRows.length > 0) {
+    return NextResponse.json(
+      { error: "Tato nemovitost už byla předána kupujícímu. Nový odkaz vystavit nelze." },
+      { status: 409 },
+    );
+  }
+
   // Token generuje DB (default encode(gen_random_bytes(24),'hex')) — nevoláme
   // ho z klienta a nikdy ho nepoužíváme jako autentizaci, jen jako claim.
   const { data: invitation, error: insErr } = await sb

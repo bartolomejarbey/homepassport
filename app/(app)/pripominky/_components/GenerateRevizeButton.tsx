@@ -23,7 +23,15 @@ const USAGE_LABEL: Record<string, string> = {
   business: "podnikání",
 };
 
-export function GenerateRevizeButton({ propertyId }: { propertyId: string }) {
+export function GenerateRevizeButton({
+  propertyId,
+  contextReady = true,
+}: {
+  propertyId: string;
+  /** Aspoň jeden způsob užívání musí být vyplněný, jinak by výpočet slepě
+   *  předpokládal vlastní bydlení. Když není, tlačítko zůstane neaktivní. */
+  contextReady?: boolean;
+}) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [loading, setLoading] = useState(false);
@@ -33,6 +41,7 @@ export function GenerateRevizeButton({ propertyId }: { propertyId: string }) {
   const busy = loading || pending;
 
   async function run() {
+    if (!contextReady) return;
     setLoading(true);
     setError(null);
     setResult(null);
@@ -59,7 +68,16 @@ export function GenerateRevizeButton({ propertyId }: { propertyId: string }) {
 
   return (
     <div className="flex flex-col items-stretch gap-2 sm:items-end">
-      <Button variant="honey" onClick={run} disabled={busy}>
+      <Button
+        variant="honey"
+        onClick={run}
+        disabled={busy || !contextReady}
+        title={
+          contextReady
+            ? undefined
+            : "Nejdřív vyplňte způsob užívání nemovitosti."
+        }
+      >
         {busy ? (
           <Loader2 size={15} className="animate-spin" />
         ) : (

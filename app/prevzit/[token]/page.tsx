@@ -68,11 +68,37 @@ function fmtDate(value: string | null | undefined): string | null {
   });
 }
 
-// Bezpečný název souboru pro hlavičku Content-Disposition v podepsané URL.
-function safeFileName(title: string | null, category: string, id: string): string {
+// Krátká přípona z původní úložné cesty (na nahrání zůstává zachována:
+// <household>/<uuid>-<jméno.ext>). Slouží jako záloha, když ji název dokumentu
+// ztratil (uživatel ho v aplikaci přejmenoval) — jinak by stažený soubor neměl
+// příponu a OS by ho neuměl otevřít.
+function extFromPath(filePath: string): string {
+  const base = filePath.split("/").pop() ?? filePath;
+  const dot = base.lastIndexOf(".");
+  if (dot <= 0 || dot === base.length - 1) return "";
+  const ext = base.slice(dot + 1);
+  // Jen rozumné přípony (alfanumerické, max 8 znaků) — nic, co by mátlo prohlížeč.
+  return /^[a-z0-9]{1,8}$/i.test(ext) ? ext.toLowerCase() : "";
+}
+
+// Bezpečný název souboru pro hlavičku Content-Disposition v podepsané URL. Pokud
+// název dokumentu nemá příponu, doplníme ji z původní cesty, aby se stažený
+// soubor uložil s funkční koncovkou (např. .pdf), ne jako neotevíratelný soubor.
+function safeFileName(
+  title: string | null,
+  category: string,
+  id: string,
+  filePath: string,
+): string {
   const base = (title && title.trim()) || DOC_CATEGORY_LABELS[category] || "dokument";
-  const cleaned = base.replace(/[^\w.\-áčďéěíňóřšťúůýžÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ ]+/g, "").trim();
-  return cleaned || `dokument-${id.slice(0, 8)}`;
+  const cleaned =
+    base.replace(/[^\w.\-áčďéěíňóřšťúůýžÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ ]+/g, "").trim() ||
+    `dokument-${id.slice(0, 8)}`;
+  const ext = extFromPath(filePath);
+  if (ext && !cleaned.toLowerCase().endsWith(`.${ext}`)) {
+    return `${cleaned}.${ext}`;
+  }
+  return cleaned;
 }
 
 function propertyName(p: {
@@ -321,7 +347,7 @@ export default async function PrevzitPage({
         admin.storage
           .from("documents")
           .createSignedUrl(d.file_path, 3600, {
-            download: safeFileName(d.title, d.category, d.id),
+            download: safeFileName(d.title, d.category, d.id, d.file_path),
           }),
       ),
     );

@@ -21,6 +21,9 @@ type Source = {
 type Chunk = { id: string; text: string; source: Source };
 
 const MAX_CHUNKS = 8;
+// Širší okno kandidátů pro potvrzené extrakce: relevanci dle dotazu filtrujeme
+// v JS (obsah je jsonb), tak ať máme z čeho vybírat i mimo nejnovějších MAX_CHUNKS.
+const EXTRACTION_CANDIDATES = 40;
 const DISCLAIMER =
   "Asistent odpovídá pouze na základě vašich vlastních dokumentů a majetku. Nejde o právní radu.";
 
@@ -61,29 +64,41 @@ export async function POST(request: Request) {
 
   let chunks: Chunk[] = [];
 
+  // Má domácnost vůbec nějaké embeddings? Zjistíme to jedním levným dotazem.
+  // Když ne (typický stav, dokud nepoběží indexace), přeskočíme drahé embedování
+  // dotazu i RPC a rovnou jdeme na textový fallback. Šetří to API volání i latenci
+  // a nespoléháme na RPC, které v nasazení nemusí existovat.
+  const { count: embCount } = await sb
+    .from("embeddings")
+    .select("id", { count: "exact", head: true })
+    .eq("household_id", householdId);
+  const hasEmbeddings = (embCount ?? 0) > 0;
+
   // --- 1) Sémantické vyhledávání přes pgvector (cosine, RPC) -----------------
   // RPC match_embeddings je SECURITY INVOKER → respektuje RLS domácnosti.
   // Pokud RPC v nasazení neexistuje, vrátí chybu a my spadneme na fallback níže.
-  try {
-    const queryEmbedding = await embed(query);
-    const { data: matches, error: rpcErr } = await sb.rpc("match_embeddings", {
-      query_embedding: queryEmbedding,
-      match_household_id: householdId,
-      match_count: MAX_CHUNKS,
-    });
-    if (!rpcErr && Array.isArray(matches)) {
-      chunks = (matches as EmbeddingMatch[])
-        .map(rowToChunk)
-        .filter((c): c is Chunk => c !== null);
+  if (hasEmbeddings) {
+    try {
+      const queryEmbedding = await embed(query);
+      const { data: matches, error: rpcErr } = await sb.rpc("match_embeddings", {
+        query_embedding: queryEmbedding,
+        match_household_id: householdId,
+        match_count: MAX_CHUNKS,
+      });
+      if (!rpcErr && Array.isArray(matches)) {
+        chunks = (matches as EmbeddingMatch[])
+          .map(rowToChunk)
+          .filter((c): c is Chunk => c !== null);
+      }
+    } catch {
+      // Embedding nebo RPC nedostupné — spadneme na textový fallback níže.
     }
-  } catch {
-    // Embedding nebo RPC nedostupné — spadneme na textový fallback níže.
   }
 
   // --- 2) Fallback A: textové hledání přímo nad embeddings.chunk_text --------
   // Spustí se, když RPC chybí, ale embeddings (úryvky textu) už existují —
   // tak dáme RAG kroku skutečný obsah dokumentů, ne jen názvy.
-  if (chunks.length === 0) {
+  if (chunks.length === 0 && hasEmbeddings) {
     const like = ilikePattern(query);
     if (like) {
       const { data: rows } = await sb
@@ -214,14 +229,16 @@ async function textSearch(
       .ilike("title", like)
       .limit(half),
     // Výtahy z dokumentů (souhrn) — sem se ukládá AI extrakce s reálným obsahem.
-    // Bereme jen potvrzené (uživatel je odsouhlasil) a od nejnovějších.
+    // Bereme jen potvrzené (uživatel je odsouhlasil) a od nejnovějších. Relevanci
+    // dle dotazu vyhodnotíme níže v JS (extracted je jsonb), proto si bereme širší
+    // okno kandidátů než MAX_CHUNKS — jinak by relevantní, ale starší výtah vypadl.
     sb
       .from("document_extractions")
       .select("document_id, extracted, created_at, documents!inner(id, title, household_id)")
       .eq("documents.household_id", householdId)
       .eq("status", "confirmed")
       .order("created_at", { ascending: false })
-      .limit(MAX_CHUNKS),
+      .limit(EXTRACTION_CANDIDATES),
     sb
       .from("assets")
       .select("id, name, brand, model, room, category")
@@ -245,7 +262,11 @@ async function textSearch(
   // Pořadí dle bohatosti obsahu: extrakce (reálná data z dokumentů) → připomínky
   // → dokumenty podle názvu → majetek. Při ořezu na MAX_CHUNKS tak zůstanou
   // nejvíce odpovídající úryvky, ne jen shody v názvu.
+  let extractionHits = 0;
   for (const e of extrRes.data ?? []) {
+    // Z širšího okna kandidátů vybíráme nejvýše MAX_CHUNKS relevantních výtahů,
+    // ať extrakce nezaberou celý výsledek a zůstane místo na připomínky/majetek.
+    if (extractionHits >= MAX_CHUNKS) break;
     // Vnořený vztah může přijít jako objekt nebo jednoprvkové pole — ošetříme obojí.
     const rel = (e as { documents?: unknown }).documents;
     const doc = (Array.isArray(rel) ? rel[0] : rel) as
@@ -262,6 +283,7 @@ async function textSearch(
       if (!terms.some((t) => hay.includes(t))) continue;
     }
     seenDocs.add(docId);
+    extractionHits += 1;
     const title = doc?.title ?? "Dokument";
     out.push({
       id: `doc:${docId}`,
