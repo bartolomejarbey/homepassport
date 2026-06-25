@@ -146,9 +146,17 @@ export default async function PrevzitPage({
   const admin = createAdminClient();
   const { data: invitation } = await admin
     .from("handover_invitations")
-    .select("id, property_id, status, expires_at")
+    .select("id, property_id, status, expires_at, accepted_by")
     .eq("token", token)
     .maybeSingle();
+
+  // Je návštěvník přihlášený? (RLS-respecting klient kvůli auth.uid().) Načítáme
+  // brzy, ať i chybové/„už převzato" stavy umí poznat, že jde o samotného
+  // kupujícího, a nabídnout mu prokliknutí na jeho nemovitost místo slepé uličky.
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
 
   if (!invitation) {
     return (
@@ -180,6 +188,31 @@ export default async function PrevzitPage({
     );
   }
   if (invitation.status === "accepted") {
+    // Pokud pas převzal přihlášený návštěvník sám, neukončuj ho slepou hláškou —
+    // nabídni mu přímý proklik na jeho nemovitost.
+    if (user && invitation.accepted_by === user.id) {
+      return (
+        <Shell>
+          <div className="card flex flex-col items-center gap-2 p-8 text-center">
+            <span className="flex h-11 w-11 items-center justify-center rounded-md bg-teal-100">
+              <BadgeCheck size={22} className="text-teal" />
+            </span>
+            <h1 className="mt-1 text-xl text-ink">Pas už máte převzatý</h1>
+            <p className="max-w-sm text-sm text-ink-soft">
+              Tuto nemovitost jste si už převzali do své domácnosti. Najdete ji
+              ve svém přehledu i s dokumenty a termíny.
+            </p>
+            <Link
+              href={`/nemovitost/${invitation.property_id}`}
+              className="btn btn-primary mt-3 text-sm"
+            >
+              <Home size={16} />
+              Otevřít nemovitost
+            </Link>
+          </div>
+        </Shell>
+      );
+    }
     return (
       <InvalidState
         title="Pas už byl převzat"
@@ -231,12 +264,6 @@ export default async function PrevzitPage({
       />
     );
   }
-
-  // Je návštěvník přihlášený? (RLS-respecting klient kvůli auth.uid().)
-  const sb = await createClient();
-  const {
-    data: { user },
-  } = await sb.auth.getUser();
 
   const address = [
     property.street,

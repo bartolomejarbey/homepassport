@@ -14,6 +14,7 @@ import {
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import type { PropertyContext } from "@/lib/db/types";
+import type { PropertyType } from "./PropertyMeta";
 import { updatePropertyContext } from "./actions";
 
 type UsageKey = "owner_occupied" | "rental" | "svj" | "business";
@@ -94,8 +95,16 @@ function usageFromCtx(ctx: PropertyContext): UsageKey {
 // badge tone here would contradict the wording_type of the reminder the engine
 // actually creates. A missing cell means there is no rule for that combination,
 // so the engine generates nothing and we must not promise a reminder.
-// Source of truth: supabase/seed.sql (CZ rules).
-const RULE_MATRIX: Record<SystemKey, Partial<Record<UsageKey, PreviewTone>>> = {
+//
+// Keyed by property type because the seed differs per type: gas/electrical/lps
+// rules exist ONLY for 'house'; the chimney rule exists for 'house' AND
+// 'apartment'. The API /api/revize/generate selects rules with
+// `property_type = <type> OR property_type IS NULL`, so for 'unit'/'land'/
+// 'commercial' (no rules, none NULL) the engine produces nothing — and so must
+// this preview. Source of truth: supabase/seed.sql (CZ rules).
+type SystemMatrix = Record<SystemKey, Partial<Record<UsageKey, PreviewTone>>>;
+
+const HOUSE_MATRIX: SystemMatrix = {
   has_chimney: { owner_occupied: "legal_required" },
   has_gas: {
     owner_occupied: "insurance_recommended",
@@ -111,13 +120,40 @@ const RULE_MATRIX: Record<SystemKey, Partial<Record<UsageKey, PreviewTone>>> = {
   has_pv: {},
 };
 
+// Apartment: only the chimney rule is seeded (and only for owner_occupied).
+const APARTMENT_MATRIX: SystemMatrix = {
+  has_chimney: { owner_occupied: "legal_required" },
+  has_gas: {},
+  has_electrical: {},
+  has_lps: {},
+  has_pv: {},
+};
+
+// unit / land / commercial: no seeded rules at all.
+const EMPTY_MATRIX: SystemMatrix = {
+  has_chimney: {},
+  has_gas: {},
+  has_electrical: {},
+  has_lps: {},
+  has_pv: {},
+};
+
+function matrixForType(type: PropertyType): SystemMatrix {
+  if (type === "house") return HOUSE_MATRIX;
+  if (type === "apartment") return APARTMENT_MATRIX;
+  return EMPTY_MATRIX;
+}
+
 export function PropertyContextForm({
   propertyId,
+  propertyType,
   initial,
 }: {
   propertyId: string;
+  propertyType: PropertyType;
   initial: PropertyContext | null;
 }) {
+  const ruleMatrix = matrixForType(propertyType);
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -141,26 +177,34 @@ export function PropertyContextForm({
     (initial?.chimney_fuel as FuelKey | null) ?? null,
   );
 
-  // Honesty preview — reflects exactly what the engine will create (see RULE_MATRIX).
+  // Honesty preview — reflects exactly what the engine will create (see ruleMatrix).
   const previewWording = useMemo(() => {
     const out: { label: string; tone: PreviewTone }[] = [];
     for (const s of SYSTEMS) {
       if (!systems[s.key]) continue;
-      const tone = RULE_MATRIX[s.key][usage];
+      const tone = ruleMatrix[s.key][usage];
       if (tone) out.push({ label: s.shortLabel, tone });
     }
     return out;
-  }, [usage, systems]);
+  }, [usage, systems, ruleMatrix]);
 
   // Systems present whose combination has NO matching rule (engine stays silent).
   // We name them explicitly so the user understands why no reminder appears.
   const silentSystems = useMemo(() => {
     const out: string[] = [];
     for (const s of SYSTEMS) {
-      if (systems[s.key] && !RULE_MATRIX[s.key][usage]) out.push(s.shortLabel);
+      if (systems[s.key] && !ruleMatrix[s.key][usage]) out.push(s.shortLabel);
     }
     return out;
-  }, [usage, systems]);
+  }, [usage, systems, ruleMatrix]);
+
+  // Honest explainer — depends on which rules actually exist for this property type.
+  const explainerCopy =
+    propertyType === "house"
+      ? "U vlastního bydlení je ze zákona povinná pouze kontrola komínu. Ostatní revize doporučujeme — bývají podmínkou pojištění nebo prevencí škod. Povinnými se stávají u pronájmu, SVJ či podnikání."
+      : propertyType === "apartment"
+        ? "U bytu je ze zákona povinná pouze kontrola spalinové cesty, máte-li napojený spotřebič na komín. Revize plynu a elektroinstalace v bytě obvykle zajišťuje SVJ či bytové družstvo pro celý dům."
+        : "Pro tento typ nemovitosti zatím nevedeme žádné zákonné ani doporučené revize. Konkrétní povinnosti se řídí způsobem využití a charakterem prostoru.";
 
   function toggleSystem(key: SystemKey) {
     setSaved(false);
@@ -363,11 +407,7 @@ export function PropertyContextForm({
             <h2 className="font-display text-lg font-semibold text-ink">
               Co z toho vyplývá
             </h2>
-            <p className="mt-1 text-sm text-ink-soft">
-              U vlastního bydlení je ze zákona povinná pouze kontrola komínu.
-              Ostatní revize doporučujeme — bývají podmínkou pojištění nebo
-              prevencí škod. Povinnými se stávají u pronájmu, SVJ či podnikání.
-            </p>
+            <p className="mt-1 text-sm text-ink-soft">{explainerCopy}</p>
           </div>
         </div>
 

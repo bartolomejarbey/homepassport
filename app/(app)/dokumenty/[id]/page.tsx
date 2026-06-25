@@ -52,6 +52,7 @@ async function rejectExtraction(formData: FormData) {
     .update({ status: "rejected", reviewed_by: user.id })
     .eq("id", extractionId);
   revalidatePath(`/dokumenty/${documentId}`);
+  revalidatePath("/dokumenty"); // odznak v seznamu vychází z nejnovější extrakce
 }
 
 async function confirmExtraction(formData: FormData) {
@@ -82,9 +83,10 @@ async function confirmExtraction(formData: FormData) {
     .maybeSingle();
   if (!doc) return;
 
-  // Idempotence: pokud už je potvrzená, nic znovu nezakládáme (ochrana proti
-  // dvojímu odeslání i opakovanému potvrzení).
-  if (ext.status === "confirmed") {
+  // Potvrdit lze jen čerstvý koncept. Pokud je už potvrzený (dvojí odeslání) nebo
+  // byl mezitím nahrazen novějším návrhem (status 'rejected'), nic neděláme — jinak
+  // bychom „oživili" zastaralou extrakci a založili podle ní připomínku.
+  if (ext.status !== "draft") {
     revalidatePath(`/dokumenty/${documentId}`);
     return;
   }
@@ -92,7 +94,8 @@ async function confirmExtraction(formData: FormData) {
   await sb
     .from("document_extractions")
     .update({ status: "confirmed", reviewed_by: user.id })
-    .eq("id", extractionId);
+    .eq("id", extractionId)
+    .eq("status", "draft"); // závodní podmínka: potvrď jen pokud je stále koncept
 
   // Volitelně založit připomínku z potvrzených dat — bez duplicit. Záruka i revize
   // jsou pro vlastníka jen "doporučené"; nikdy netvrdíme, že to ukládá zákon.
@@ -144,7 +147,8 @@ async function confirmExtraction(formData: FormData) {
   }
 
   revalidatePath(`/dokumenty/${documentId}`);
-  revalidatePath("/pripominky");
+  revalidatePath("/dokumenty"); // odznak „Potvrzeno" v seznamu
+  revalidatePath("/pripominky"); // mohla vzniknout připomínka ze záruky/revize
 }
 
 // Re-spuštění AI extrakce z detailu (když po nahrání selhala nebo byl návrh odmítnut).
@@ -181,6 +185,14 @@ async function runExtraction(formData: FormData) {
   const confidence =
     typeof extracted.confidence === "number" ? extracted.confidence : null;
 
+  // Nový návrh nahrazuje starý: případné dosud nevyřízené koncepty téhož dokumentu
+  // označíme jako odmítnuté, ať se nehromadí neviditelné duplicitní návrhy.
+  await sb
+    .from("document_extractions")
+    .update({ status: "rejected", reviewed_by: user.id })
+    .eq("document_id", doc.id)
+    .eq("status", "draft");
+
   await sb.from("document_extractions").insert({
     document_id: doc.id,
     extracted,
@@ -191,6 +203,7 @@ async function runExtraction(formData: FormData) {
   });
 
   revalidatePath(`/dokumenty/${documentId}`);
+  revalidatePath("/dokumenty"); // nový návrh -> odznak v seznamu
 }
 
 // ---- helpers --------------------------------------------------------------

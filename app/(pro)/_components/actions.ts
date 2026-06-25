@@ -8,6 +8,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { extractDocument } from "@/lib/ai";
 
 // ---------- create organization (via bootstrap RPC) ----------
 const orgSchema = z.object({
@@ -141,4 +142,137 @@ export async function createOrgProperty(input: unknown): Promise<CreatePropertyR
   revalidatePath("/pro");
   revalidatePath("/pro/nemovitosti");
   return { ok: true, id: property.id };
+}
+
+// ---------- upload a document onto an org property passport ----------
+// B2B documents live on the PROPERTY layer (household_id = null), so docs_access
+// RLS exposes them to org members via can_access_property and they travel to the
+// buyer on handover. Crucially, Storage RLS (storage_household_ok) requires the
+// first path segment to be a household the user belongs to — an org property has
+// none — so the upload itself MUST go through the service role after we verify the
+// caller's org access. We key the path by property_id and never expose it raw.
+const DOC_CATEGORIES = [
+  "contract", "invoice", "penb", "inspection",
+  "manual", "warranty", "plan", "insurance", "other",
+] as const;
+
+const uploadSchema = z.object({
+  property_id: z.string().uuid(),
+  category: z.enum(DOC_CATEGORIES),
+  // Base64 (data URL stripped client-side) keeps the action self-contained — no
+  // separate signed-upload round-trip that storage RLS would block for orgs.
+  filename: z.string().trim().min(1).max(200),
+  mime: z.string().trim().max(120).optional(),
+  size_bytes: z.number().int().nonnegative().max(25 * 1024 * 1024),
+  data_base64: z.string().min(1),
+});
+
+export type UploadDocResult =
+  | { ok: false; error: string }
+  | { ok: true; id: string; extracted: boolean };
+
+export async function uploadOrgDocument(input: unknown): Promise<UploadDocResult> {
+  const parsed = uploadSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: "Soubor se nepodařilo zpracovat. Zkontrolujte typ a velikost." };
+  }
+  const { property_id, category, filename, mime, size_bytes, data_base64 } = parsed.data;
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return { ok: false, error: "Nejste přihlášeni." };
+
+  // Access check via RLS: the org link is only readable to org members, so a hit
+  // here proves the caller may upload to this property's passport.
+  const { data: link } = await sb
+    .from("property_org_links")
+    .select("property_id, organization_id")
+    .eq("property_id", property_id)
+    .maybeSingle();
+  if (!link) {
+    return { ok: false, error: "Nemáte oprávnění nahrávat k tomuto pasu." };
+  }
+
+  let bytes: Buffer;
+  try {
+    bytes = Buffer.from(data_base64, "base64");
+  } catch {
+    return { ok: false, error: "Soubor se nepodařilo načíst." };
+  }
+  if (bytes.byteLength === 0) {
+    return { ok: false, error: "Soubor je prázdný." };
+  }
+
+  const admin = createAdminClient();
+  const safeName = filename.replace(/[^\w.\-]+/g, "_");
+  // Org passports have no household; key the private path by property_id. Served
+  // only via short-lived signed URLs generated server-side.
+  const path = `${property_id}/${crypto.randomUUID()}-${safeName}`;
+  const contentType = mime && mime.length ? mime : "application/octet-stream";
+
+  const { error: upErr } = await admin.storage
+    .from("documents")
+    .upload(path, bytes, { contentType, upsert: false });
+  if (upErr) {
+    return { ok: false, error: "Nahrání do úložiště selhalo. Zkuste to prosím znovu." };
+  }
+
+  const { data: doc, error: insErr } = await admin
+    .from("documents")
+    .insert({
+      household_id: null,
+      property_id,
+      category,
+      title: filename,
+      file_path: path,
+      mime: mime ?? null,
+      size_bytes,
+      owner_scope: "property",
+      // Builder docs follow the home to the buyer by definition.
+      transferable: true,
+      uploaded_by: user.id,
+    })
+    .select("id")
+    .single();
+  if (insErr || !doc) {
+    // Roll the orphaned object back so the bucket never drifts from the table.
+    await admin.storage.from("documents").remove([path]);
+    return { ok: false, error: "Dokument se nepodařilo uložit." };
+  }
+
+  // AI DRAFT (never auto-trusted). We extract here with the service role because
+  // /api/ai/extract reads storage under RLS, which would deny an org property doc.
+  // Failure is non-fatal — the row exists and extraction can be retried later.
+  let extracted = false;
+  try {
+    const dataUrl = `data:${contentType};base64,${data_base64}`;
+    const result = await extractDocument(dataUrl);
+    const confidence = typeof result.confidence === "number" ? result.confidence : null;
+    const { error: exErr } = await admin.from("document_extractions").insert({
+      document_id: doc.id,
+      extracted: result,
+      confidence,
+      provider: "openai",
+      model: process.env.AI_MODEL ?? "gpt-5.5",
+      status: "draft",
+    });
+    extracted = !exErr;
+  } catch {
+    extracted = false;
+  }
+
+  await admin.from("audit_events").insert({
+    actor_id: user.id,
+    organization_id: (link as { organization_id?: string }).organization_id ?? null,
+    property_id,
+    action: "document.uploaded_by_builder",
+    target: { category, filename },
+  });
+
+  revalidatePath(`/pro/nemovitosti/${property_id}`);
+  revalidatePath("/pro/nemovitosti");
+  revalidatePath("/pro");
+  return { ok: true, id: doc.id, extracted };
 }

@@ -2,7 +2,8 @@
 // "Odhadnout hodnotu" (hrubý odhad rozsahu přes /api/ai/value, uložený jako
 // orientační střed). Dole připojené záruky a dokumenty. Vše česky.
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
+import { revalidatePath } from "next/cache";
 import {
   ArrowLeft,
   Package,
@@ -15,8 +16,47 @@ import { createClient } from "@/lib/supabase/server";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { ValueEstimator } from "../_components/ValueEstimator";
+import { DeleteAssetButton } from "../_components/DeleteAssetButton";
 
 export const metadata = { title: "Položka majetku — Home Passport" };
+
+// ---- server action: smazat položku ----------------------------------------
+// Smaže řádek assets (FK cascade odstraní asset_photos, documents.asset_id se
+// vynuluje) a uklidí fotky z privátního bucketu "assets". RLS (assets_access)
+// dovolí smazat jen položku vlastní domácnosti.
+async function deleteAsset(assetId: string) {
+  "use server";
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) redirect("/prihlaseni");
+
+  // Cesty k fotkám si zjistíme PŘED smazáním řádku (cascade jinak smaže i
+  // asset_photos a o cesty bychom přišli). Objekty v úložišti se nemažou
+  // automaticky, proto je uklidíme ručně.
+  const { data: photoRows } = await sb
+    .from("asset_photos")
+    .select("file_path")
+    .eq("asset_id", assetId);
+  const paths = (photoRows ?? [])
+    .map((p) => p.file_path as string | null)
+    .filter((p): p is string => !!p);
+
+  const { error: delErr } = await sb.from("assets").delete().eq("id", assetId);
+  if (delErr) {
+    // RLS nebo cizí položka — vrátíme uživatele na detail beze změny.
+    redirect(`/majetek/${assetId}`);
+  }
+
+  if (paths.length > 0) {
+    // Úklid úložiště je best-effort: i kdyby selhal, položka už je smazaná.
+    await sb.storage.from("assets").remove(paths);
+  }
+
+  revalidatePath("/majetek");
+  redirect("/majetek");
+}
 
 type AssetRow = {
   id: string;
@@ -310,6 +350,22 @@ export default async function MajetekDetailPage({
             ))}
           </ul>
         )}
+      </section>
+
+      {/* Smazání položky */}
+      <section className="border-t border-line pt-6">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="font-display text-base font-semibold text-ink">
+              Smazat položku
+            </h2>
+            <p className="mt-0.5 text-sm text-muted">
+              Odebere položku z inventáře i její fotku z úložiště. Připojené
+              dokumenty zůstanou v sekci Dokumenty.
+            </p>
+          </div>
+          <DeleteAssetButton action={deleteAsset.bind(null, a.id)} />
+        </div>
       </section>
     </div>
   );

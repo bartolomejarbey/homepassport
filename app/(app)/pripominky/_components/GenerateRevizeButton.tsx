@@ -71,10 +71,12 @@ export function GenerateRevizeButton({ propertyId }: { propertyId: string }) {
 
       {result && !error && (
         <p className="text-xs text-muted">
-          {result.created > 0
-            ? `Přidáno ${result.created} ${result.created === 1 ? "připomínka" : result.created < 5 ? "připomínky" : "připomínek"}`
-            : "Nic nového"}
-          {result.skipped > 0 && ` · ${result.skipped} už existovalo`}
+          {result.evaluated === 0
+            ? "Pro tuto nemovitost a způsob užívání nemáme žádnou revizi k hlídání"
+            : result.created > 0
+              ? `Přidáno ${result.created} ${result.created === 1 ? "připomínka" : result.created < 5 ? "připomínky" : "připomínek"}`
+              : "Vše už máte spočítané"}
+          {result.evaluated > 0 && result.skipped > 0 && ` · ${result.skipped} už existovalo`}
           {" · režim: "}
           {USAGE_LABEL[result.usage] ?? result.usage}
         </p>

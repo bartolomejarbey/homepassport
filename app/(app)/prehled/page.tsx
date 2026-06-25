@@ -16,6 +16,10 @@ import {
 import { createClient } from "@/lib/supabase/server";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
+import {
+  AttentionReminders,
+  type AttentionItem,
+} from "../_components/AttentionReminders";
 
 export const metadata = { title: "Přehled — Home Passport" };
 
@@ -59,6 +63,8 @@ export default async function PrehledPage() {
   let openReminders = 0;
   let assetCount = 0;
   let passportSections = 0;
+  let attention: AttentionItem[] = [];
+  let overdueCount = 0;
 
   if (householdId) {
     // První nemovitost domácnosti — cíl pro pas i rychlé akce.
@@ -70,7 +76,7 @@ export default async function PrehledPage() {
       .maybeSingle();
     propertyId = ownerLink?.property_id ?? null;
 
-    const [docs, reminders, assets, sections] = await Promise.all([
+    const [docs, reminders, assets, sections, dueSoon] = await Promise.all([
       sb
         .from("documents")
         .select("id", { count: "exact", head: true })
@@ -92,12 +98,33 @@ export default async function PrehledPage() {
             .select("id", { count: "exact", head: true })
             .eq("property_id", propertyId)
         : Promise.resolve({ count: 0 } as { count: number }),
+      // Nejbližší otevřené připomínky pro sekci "Vyžaduje pozornost".
+      // Bez termínu řadíme nakonec (nulls last), aby nahoře byly skutečné termíny.
+      sb
+        .from("reminders")
+        .select("id, title, due_date, wording_type")
+        .eq("household_id", householdId)
+        .in("status", ["open", "snoozed"])
+        .order("due_date", { ascending: true, nullsFirst: false })
+        .limit(3),
     ]);
 
     docCount = docs.count ?? 0;
     openReminders = reminders.count ?? 0;
     assetCount = assets.count ?? 0;
     passportSections = (sections as { count: number | null }).count ?? 0;
+    attention = ((dueSoon as { data: AttentionItem[] | null }).data ?? []);
+
+    // Po termínu = otevřené připomínky s termínem v minulosti (počítáme zvlášť,
+    // abychom na dlaždici upozornili na to, co už hoří).
+    const todayIso = new Date().toISOString().slice(0, 10);
+    const { count: overdue } = await sb
+      .from("reminders")
+      .select("id", { count: "exact", head: true })
+      .eq("household_id", householdId)
+      .in("status", ["open", "snoozed"])
+      .lt("due_date", todayIso);
+    overdueCount = overdue ?? 0;
   }
 
   const hasProperty = Boolean(propertyId);
@@ -140,7 +167,12 @@ export default async function PrehledPage() {
       value: openReminders,
       icon: BellRing,
       href: "/pripominky",
-      sub: openReminders === 0 ? "Nic vás nečeká" : "k vyřízení",
+      sub:
+        openReminders === 0
+          ? "Nic vás nečeká"
+          : overdueCount > 0
+            ? `${overdueCount} ${plural(overdueCount, "po termínu", "po termínu", "po termínu")}`
+            : "k vyřízení",
     },
     {
       label: "Položky majetku",
@@ -251,6 +283,8 @@ export default async function PrehledPage() {
           </Card>
         </Link>
       </div>
+
+      <AttentionReminders items={attention} />
 
       {hasProperty && (
         <section className="space-y-3">

@@ -76,7 +76,11 @@ export function UploadCard({
         })
         .select("id")
         .single();
-      if (insErr || !doc) throw new Error(insErr?.message ?? "Nepodařilo se uložit dokument.");
+      if (insErr || !doc) {
+        // Záznam se nezaložil — uklidíme osiřelý soubor, ať v úložišti nezůstane viset.
+        await sb.storage.from("documents").remove([path]);
+        throw new Error(insErr?.message ?? "Nepodařilo se uložit dokument.");
+      }
 
       // Spustit AI extrakci (návrh). Nebrání úspěšnému nahrání — selhání jen logujeme.
       try {

@@ -1,6 +1,8 @@
 // Client dialog to create a builder-owned property passport. Data entry is kept
 // deliberately tiny (type is the only required field) — the pitch is "založte pas,
-// nahrajte dokumenty a AI je roztřídí", so on success we route to document upload.
+// nahrajte dokumenty a AI je roztřídí", so on success we route to the passport
+// detail INSIDE /pro (where the B2B upload lives), not the consumer /dokumenty
+// page, which a firm without a household cannot use.
 "use client";
 
 import { useRef, useState, useTransition } from "react";
@@ -55,8 +57,13 @@ export function CreatePropertyDialog({ orgId }: { orgId: string }) {
         return;
       }
       setOpen(false);
-      if (upload) router.push(`/dokumenty?property=${res.id}`);
-      router.refresh();
+      if (upload) {
+        // Straight into the new passport to upload documents.
+        router.push(`/pro/nemovitosti/${res.id}`);
+      } else {
+        // Stay put but reflect the new passport in the list.
+        router.refresh();
+      }
     });
   }
 

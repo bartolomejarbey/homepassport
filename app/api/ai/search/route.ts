@@ -139,25 +139,32 @@ export async function POST(request: Request) {
   }
 
   // Mapuj indexy citací (1-based z ragAnswer) zpět na konkrétní zdroje.
+  // Model je nedůvěryhodný vstup: indexy ověříme jako celá čísla v rozsahu,
+  // ať náhodný/halucinovaný index nepadne na nesprávný zdroj.
   const citedIdx = Array.isArray(result.sources) ? result.sources : [];
   const cited = citedIdx
-    .map((i) => chunks[i - 1]?.source)
+    .map((i) => {
+      const n = Math.trunc(Number(i));
+      return Number.isInteger(n) && n >= 1 && n <= chunks.length
+        ? chunks[n - 1]?.source
+        : undefined;
+    })
     .filter((s): s is Source => Boolean(s));
   // Pokud model neuvedl citace, ukaž alespoň nalezené zdroje (transparentnost).
   const sources = dedupeSources(
     cited.length > 0 ? cited : chunks.map((c) => c.source),
   );
 
+  // Disclaimer NEbereme od modelu — držíme vlastní, čestnou a předvídatelnou
+  // formulaci (princip: jen vlastní data, nejde o právní radu). Model by mohl
+  // disclaimer vynechat nebo přeformulovat zavádějícím způsobem.
   return NextResponse.json({
     answer:
       typeof result.answer === "string" && result.answer.trim()
         ? result.answer.trim()
         : "K tomuto dotazu nemám ve vašich datech jednoznačnou odpověď.",
     sources,
-    disclaimer:
-      typeof result.disclaimer === "string" && result.disclaimer.trim()
-        ? result.disclaimer.trim()
-        : DISCLAIMER,
+    disclaimer: DISCLAIMER,
   });
 }
 

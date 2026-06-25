@@ -1,9 +1,10 @@
-// Renders a list of org-owned property passports. Each row links to its document
-// upload (the primary B2B action — "nahrajte dokumenty, AI roztřídí") and exposes
-// the handover dialog to generate a buyer link. Server component; the dialog is the
-// only interactive island.
+// Renders a list of org-owned property passports. Each row opens its passport
+// detail (the primary B2B action — "nahrajte dokumenty, AI roztřídí" lives there,
+// inside the /pro group — NOT the consumer /dokumenty route, which a firm without a
+// household cannot use) and exposes the handover dialog to generate a buyer link.
+// Server component; the dialog is the only interactive island.
 import Link from "next/link";
-import { Home, MapPin, UploadCloud, CheckCircle2, Clock } from "lucide-react";
+import { Home, MapPin, FolderOpen, CheckCircle2, Clock } from "lucide-react";
 import { HandoverDialog } from "./HandoverDialog";
 import {
   type ProProperty,
@@ -81,11 +82,11 @@ export function PropertyList({
 
               <div className="flex shrink-0 flex-wrap items-center gap-2">
                 <Link
-                  href={`/dokumenty?property=${p.id}`}
+                  href={`/pro/nemovitosti/${p.id}`}
                   className="btn btn-honey text-sm"
                 >
-                  <UploadCloud size={15} />
-                  Nahrát dokumenty
+                  <FolderOpen size={15} />
+                  Otevřít pas
                 </Link>
                 {isHandedOver ? (
                   <span className="inline-flex items-center gap-1.5 px-2 text-sm font-medium text-teal">

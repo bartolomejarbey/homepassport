@@ -57,6 +57,15 @@ export async function POST(request: Request) {
   const confidence =
     typeof extracted.confidence === "number" ? extracted.confidence : null;
 
+  // Nový návrh nahrazuje starý: dosud nevyřízené koncepty téhož dokumentu označíme
+  // jako odmítnuté, ať se nehromadí neviditelné duplicitní návrhy (detail i seznam
+  // pracují vždy jen s nejnovější extrakcí).
+  await sb
+    .from("document_extractions")
+    .update({ status: "rejected", reviewed_by: user.id })
+    .eq("document_id", doc.id)
+    .eq("status", "draft");
+
   // Uložit NÁVRH (status draft). Uživatel ho v detailu potvrdí nebo odmítne.
   const { data: extraction, error: insErr } = await sb
     .from("document_extractions")

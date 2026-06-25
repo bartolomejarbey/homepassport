@@ -23,7 +23,11 @@ const CATEGORY_LABEL: Record<string, string> = {
   other: "Ostatní",
 };
 
-type ExtractionRow = { status: "draft" | "confirmed" | "rejected"; confidence: number | null };
+type ExtractionRow = {
+  status: "draft" | "confirmed" | "rejected";
+  confidence: number | null;
+  created_at: string;
+};
 type DocRow = {
   id: string;
   title: string | null;
@@ -33,17 +37,23 @@ type DocRow = {
   document_extractions: ExtractionRow[] | null;
 };
 
+// Stav v seznamu musí odpovídat detailu: bereme NEJNOVĚJŠÍ extrakci, ne „jakákoli
+// potvrzená vyhrává". Vnořený select nezaručuje pořadí, proto řadíme zde.
 function extractionBadge(extractions: ExtractionRow[] | null) {
-  const list = extractions ?? [];
-  if (list.some((e) => e.status === "confirmed"))
+  const list = [...(extractions ?? [])].sort(
+    (a, b) => Date.parse(b.created_at) - Date.parse(a.created_at),
+  );
+  const latest = list[0];
+  if (!latest) return null;
+  if (latest.status === "confirmed")
     return <Badge tone="verified">Potvrzeno</Badge>;
-  if (list.some((e) => e.status === "draft"))
+  if (latest.status === "draft")
     return (
       <Badge tone="insurance_recommended">
         <Sparkles size={11} /> Návrh
       </Badge>
     );
-  return null;
+  return null; // odmítnuto -> bez odznaku (uživatel může navrhnout znovu v detailu)
 }
 
 export default async function DokumentyPage({
@@ -85,7 +95,7 @@ export default async function DokumentyPage({
     let query = sb
       .from("documents")
       .select(
-        "id, title, category, transferable, created_at, document_extractions(status, confidence)",
+        "id, title, category, transferable, created_at, document_extractions(status, confidence, created_at)",
       )
       .eq("household_id", householdId);
     // Filtr na nemovitost platí jen tehdy, když k ní opravdu máme přístup.

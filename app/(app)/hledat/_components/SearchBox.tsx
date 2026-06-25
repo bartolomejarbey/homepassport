@@ -63,11 +63,23 @@ export function SearchBox() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ query: trimmed }),
       });
-      const data = await res.json();
+      // Server může v krajním případě vrátit i ne-JSON (např. HTML chybovou
+      // stránku) — ošetříme, ať uživatel dostane srozumitelnou hlášku.
+      const data = await res.json().catch(() => null);
       if (!res.ok) {
-        throw new Error(data?.error ?? "Hledání se nezdařilo.");
+        throw new Error(data?.error ?? "Hledání se nezdařilo. Zkuste to prosím znovu.");
       }
-      setResult(data as SearchResult);
+      if (!data || typeof data.answer !== "string") {
+        throw new Error("Asistent vrátil neočekávanou odpověď. Zkuste to prosím znovu.");
+      }
+      setResult({
+        answer: data.answer,
+        sources: Array.isArray(data.sources) ? data.sources : [],
+        disclaimer:
+          typeof data.disclaimer === "string" && data.disclaimer.trim()
+            ? data.disclaimer
+            : "",
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Hledání se nezdařilo.");
     } finally {
@@ -175,10 +187,12 @@ export function SearchBox() {
             )}
           </Card>
 
-          <p className="flex items-start gap-2 text-xs text-muted">
-            <Info size={13} className="mt-0.5 shrink-0" />
-            <span>{result.disclaimer}</span>
-          </p>
+          {result.disclaimer && (
+            <p className="flex items-start gap-2 text-xs text-muted">
+              <Info size={13} className="mt-0.5 shrink-0" />
+              <span>{result.disclaimer}</span>
+            </p>
+          )}
         </div>
       )}
     </div>

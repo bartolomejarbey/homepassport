@@ -4,7 +4,7 @@ import { notFound } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 import type { PropertyContext } from "@/lib/db/types";
-import { propertyName } from "../../_components/PropertyMeta";
+import { propertyName, type PropertyType } from "../../_components/PropertyMeta";
 import { PropertyContextForm } from "../../_components/PropertyContextForm";
 
 type Params = { id: string };
@@ -27,6 +27,13 @@ export default async function KontextPage({
     .maybeSingle();
 
   if (!property) notFound();
+
+  // The honesty preview must mirror exactly which revision_rules exist for THIS
+  // property type (seed has gas/electrical/lps only for 'house'; chimney also for
+  // 'apartment'). Without the type, the preview would promise reminders the engine
+  // never creates (e.g. gas revize for a byt). See PropertyContextForm's per-type
+  // rule matrix (matrixForType).
+  const propertyType = (property.type as PropertyType) ?? "house";
 
   const { data: context } = await sb
     .from("property_contexts")
@@ -59,6 +66,7 @@ export default async function KontextPage({
 
       <PropertyContextForm
         propertyId={id}
+        propertyType={propertyType}
         initial={(context as PropertyContext | null) ?? null}
       />
     </div>

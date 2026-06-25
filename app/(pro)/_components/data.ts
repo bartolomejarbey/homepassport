@@ -100,3 +100,81 @@ export async function getOrgHandoverStats(propertyIds: string[]): Promise<Handov
   }
   return { handedOver, pending };
 }
+
+/**
+ * A single org-owned property passport, but ONLY if the signed-in user may access
+ * it. RLS (can_access_property → property_org_links → is_org_member) returns null
+ * for properties the user has no claim to, so this doubles as the access check the
+ * /pro/nemovitosti/[id] page relies on. Returns null when not found / not allowed.
+ */
+export async function getOrgProperty(propertyId: string): Promise<ProProperty | null> {
+  const sb = await createClient();
+  const { data } = await sb
+    .from("properties")
+    .select("id, type, title, street, city, postal_code, status, created_at")
+    .eq("id", propertyId)
+    .maybeSingle();
+  return (data as ProProperty | null) ?? null;
+}
+
+/** Whether a live (pending, unexpired) handover invite exists for this property. */
+export async function getPropertyHasPendingInvite(propertyId: string): Promise<boolean> {
+  const { pending, handedOver } = await getOrgHandoverStats([propertyId]);
+  return pending.has(propertyId) && !handedOver.has(propertyId);
+}
+
+/** Whether the property has already reached a buyer (accepted invitation). */
+export async function getPropertyHandedOver(propertyId: string): Promise<boolean> {
+  const { handedOver } = await getOrgHandoverStats([propertyId]);
+  return handedOver.has(propertyId);
+}
+
+export type PassportDoc = {
+  id: string;
+  title: string | null;
+  category: string;
+  transferable: boolean;
+  created_at: string;
+  extraction: { status: "draft" | "confirmed" | "rejected"; confidence: number | null } | null;
+};
+
+/**
+ * Documents attached to an org property passport. These carry household_id = null
+ * and property_id = the passport; docs_access RLS exposes them to org members via
+ * can_access_property. Newest first; the latest AI draft drives the per-row badge.
+ */
+export async function getPassportDocuments(propertyId: string): Promise<PassportDoc[]> {
+  const sb = await createClient();
+  const { data } = await sb
+    .from("documents")
+    .select(
+      "id, title, category, transferable, created_at, document_extractions(status, confidence, created_at)",
+    )
+    .eq("property_id", propertyId)
+    .order("created_at", { ascending: false });
+
+  type Raw = {
+    id: string;
+    title: string | null;
+    category: string;
+    transferable: boolean;
+    created_at: string;
+    document_extractions:
+      | { status: "draft" | "confirmed" | "rejected"; confidence: number | null; created_at: string }[]
+      | null;
+  };
+
+  return ((data as Raw[] | null) ?? []).map((d) => {
+    const latest = (d.document_extractions ?? [])
+      .slice()
+      .sort((a, b) => (b.created_at ?? "").localeCompare(a.created_at ?? ""))[0];
+    return {
+      id: d.id,
+      title: d.title,
+      category: d.category,
+      transferable: d.transferable,
+      created_at: d.created_at,
+      extraction: latest ? { status: latest.status, confidence: latest.confidence } : null,
+    };
+  });
+}
