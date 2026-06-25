@@ -48,24 +48,32 @@ export async function reopen(formData: FormData): Promise<void> {
   const parsed = idSchema.safeParse(formData.get("reminderId"));
   if (!parsed.success) return;
 
-  const { sb } = await requireUser();
+  const { sb, user } = await requireUser();
 
   await sb.from("reminders").update({ status: "open" }).eq("id", parsed.data);
+
+  await sb.from("audit_events").insert({
+    actor_id: user.id,
+    action: "reminder.reopened",
+    target: { reminder_id: parsed.data },
+  });
 
   revalidatePath("/pripominky");
   revalidatePath("/prehled");
 }
 
 /**
- * Snooze: push the due date forward by N days and keep the reminder open.
- * If there is no due date yet, snooze from today.
+ * Snooze: push the due date forward by N days and mark the reminder as snoozed.
+ * If there is no due date yet, snooze from today. We use the 'snoozed' status
+ * (not 'open') so the rest of the app — which counts open+snoozed together —
+ * still shows it, while the card can honestly label it as deferred.
  */
 export async function snooze(formData: FormData): Promise<void> {
   const id = idSchema.safeParse(formData.get("reminderId"));
   const days = snoozeSchema.safeParse(formData.get("days"));
   if (!id.success || !days.success) return;
 
-  const { sb } = await requireUser();
+  const { sb, user } = await requireUser();
 
   const { data: current } = await sb
     .from("reminders")
@@ -82,8 +90,14 @@ export async function snooze(formData: FormData): Promise<void> {
 
   await sb
     .from("reminders")
-    .update({ due_date: due, status: "open" })
+    .update({ due_date: due, status: "snoozed" })
     .eq("id", id.data);
+
+  await sb.from("audit_events").insert({
+    actor_id: user.id,
+    action: "reminder.snoozed",
+    target: { reminder_id: id.data, days: days.data, due_date: due },
+  });
 
   revalidatePath("/pripominky");
   revalidatePath("/prehled");

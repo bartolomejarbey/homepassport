@@ -1,4 +1,6 @@
-// middleware.ts — refreshes the Supabase session on every request and guards the app routes.
+// proxy.ts — Next.js 16 renamed `middleware` to `proxy` (same file convention,
+// project root). Refreshes the Supabase session on every request and guards the
+// app routes before they render.
 import { NextResponse, type NextRequest } from "next/server";
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 
@@ -13,7 +15,13 @@ const PROTECTED_PREFIXES = [
   "/pro",
 ];
 
-export async function middleware(request: NextRequest) {
+// Public carve-outs that sit UNDER a protected prefix and must stay open.
+// /pro/poptavka is the B2B sales / pilot-request page — prospective firms reach
+// it before they have an account, so it must not be forced through login. (The
+// real console gate lives in app/(pro)/pro/(console)/layout.tsx.)
+const PUBLIC_EXCEPTIONS = ["/pro/poptavka"];
+
+export async function proxy(request: NextRequest) {
   // Mutable response we can attach refreshed auth cookies to.
   let response = NextResponse.next({ request });
 
@@ -45,9 +53,14 @@ export async function middleware(request: NextRequest) {
   } = await supabase.auth.getUser();
 
   const { pathname } = request.nextUrl;
-  const isProtected = PROTECTED_PREFIXES.some(
+  const isPublicException = PUBLIC_EXCEPTIONS.some(
     (p) => pathname === p || pathname.startsWith(`${p}/`),
   );
+  const isProtected =
+    !isPublicException &&
+    PROTECTED_PREFIXES.some(
+      (p) => pathname === p || pathname.startsWith(`${p}/`),
+    );
 
   if (isProtected && !user) {
     const redirectUrl = request.nextUrl.clone();

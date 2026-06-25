@@ -28,7 +28,7 @@ export async function POST(request: Request) {
   // RLS (assets_access) zajistí, že vidíme jen položku vlastní domácnosti.
   const { data: asset, error: assetErr } = await sb
     .from("assets")
-    .select("id, name, brand, purchase_date")
+    .select("id, name, brand, model, purchase_date")
     .eq("id", parsed.assetId)
     .maybeSingle();
   if (assetErr || !asset) {
@@ -43,10 +43,16 @@ export async function POST(request: Request) {
     if (Number.isFinite(y) && y >= 0) ageYears = y;
   }
 
+  // Model zpřesňuje odhad — připojíme ho k názvu, protože estimateValue() přijímá
+  // jen name/brand/age_years. (Brand jde zvlášť, aby se v názvu nezdvojoval.)
+  const nameForEstimate = asset.model
+    ? `${asset.name} ${asset.model}`.trim()
+    : asset.name;
+
   let est;
   try {
     est = await estimateValue({
-      name: asset.name,
+      name: nameForEstimate,
       brand: asset.brand ?? undefined,
       age_years: ageYears,
     });

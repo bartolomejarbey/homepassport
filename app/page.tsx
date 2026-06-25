@@ -1,7 +1,7 @@
 import Link from "next/link";
 import {
   FileText, ScanLine, BellRing, ShieldCheck, Building2, Home,
-  ArrowRight, Boxes, KeyRound, Sparkles,
+  ArrowRight, Boxes, KeyRound, Sparkles, FolderKanban,
 } from "lucide-react";
 
 export default function LandingPage() {
@@ -109,7 +109,12 @@ export default function LandingPage() {
               Založte pas, naplňte ho technickou dokumentací a předejte kupci. Zvyšte
               vnímanou hodnotu, vyřešte EPBD a zůstaňte s klientem v kontaktu i po prodeji.
             </p>
-            <Link href="/pro/poptavka" className="btn btn-honey mt-6">Domluvit pilot <ArrowRight size={16} /></Link>
+            <div className="mt-6 flex flex-wrap gap-3">
+              <Link href="/pro/poptavka" className="btn btn-honey">Domluvit pilot <ArrowRight size={16} /></Link>
+              <Link href="/pro" className="btn btn-ghost border border-white/20 text-white hover:bg-white/10">
+                <FolderKanban size={16} /> Do firemní konzole
+              </Link>
+            </div>
           </div>
           <div className="rounded-lg border border-white/15 bg-white/5 p-6 text-sm">
             <div className="font-mono text-honey-100">PŘEDÁNÍ</div>

@@ -38,6 +38,17 @@ type Guess = {
   confidence?: number;
 };
 
+// Smaže osamocený soubor z bucketu "assets" (nahraný, ale nepotvrzený). Voláno
+// při resetu / výměně fotky, aby v úložišti nezůstávaly opuštěné objekty.
+async function removeOrphan(path: string | null) {
+  if (!path) return;
+  try {
+    await createClient().storage.from("assets").remove([path]);
+  } catch {
+    // úklid je best-effort — případné selhání uživatele nezdržuje
+  }
+}
+
 // Nízká spolehlivost AI návrhu není „nebezpečí" ani zákonná povinnost — proto
 // nikdy červený (legal_required) tón. Jen neutrální / teplý odstín dle jistoty.
 function confidenceTone(c: number | null) {
@@ -73,14 +84,20 @@ export function PhotoCapture({
   const [name, setName] = useState("");
   const [category, setCategory] = useState<string>("Spotřebič");
   const [brand, setBrand] = useState("");
+  const [model, setModel] = useState("");
   const [room, setRoom] = useState("");
 
-  function reset() {
+  // Vyčistí stav formuláře. Pokud byl nahraný (ale nepotvrzený) soubor, smaže ho
+  // z úložiště, aby tam nezůstal opuštěný objekt. `keepPath` = soubor, který si
+  // ponecháváme (např. když rovnou nahráváme nový a starý mažeme jinde).
+  function reset(opts?: { keepPath?: string | null }) {
+    if (photoPath && photoPath !== opts?.keepPath) void removeOrphan(photoPath);
     setPhotoPath(null);
     setConfidence(null);
     setName("");
     setCategory("Spotřebič");
     setBrand("");
+    setModel("");
     setRoom("");
     setError(null);
     if (preview) URL.revokeObjectURL(preview);
@@ -92,6 +109,8 @@ export function PhotoCapture({
     const file = e.target.files?.[0];
     if (!file) return;
     setError(null);
+    // Pokud už byl nahraný nepotvrzený soubor (uživatel vybírá jiný), smaž ho.
+    if (photoPath) void removeOrphan(photoPath);
     setBusy(true);
     if (preview) URL.revokeObjectURL(preview);
     setPreview(URL.createObjectURL(file));
@@ -124,6 +143,7 @@ export function PhotoCapture({
           setName(guess?.name ?? "");
           if (guess?.category) setCategory(guess.category);
           setBrand(guess?.brand ?? "");
+          setModel(guess?.model ?? "");
           setConfidence(
             typeof guess?.confidence === "number" ? guess.confidence : null,
           );
@@ -166,6 +186,7 @@ export function PhotoCapture({
           name: name.trim(),
           category: category || null,
           brand: brand.trim() || null,
+          model: model.trim() || null,
           room: room.trim() || null,
           source: "photo",
           created_by: user?.id ?? null,
@@ -175,12 +196,29 @@ export function PhotoCapture({
       if (insErr || !asset)
         throw new Error(insErr?.message ?? "Položku se nepodařilo uložit.");
 
-      // Připojit nahranou fotku k položce.
-      await sb
+      // Připojit nahranou fotku k položce. Selhání tu nesmí ztratit už založenou
+      // položku — ohlásíme ho, ale fotka zůstává v úložišti pod household_id.
+      const { error: photoErr } = await sb
         .from("asset_photos")
         .insert({ asset_id: asset.id, file_path: photoPath });
 
-      reset();
+      if (photoErr) {
+        // Položka existuje, jen propojení fotky selhalo. Zůstaneme na místě a
+        // zobrazíme upozornění; seznam položek vlevo se přesto obnoví.
+        setError(
+          "Položka byla uložena, ale fotku se k ní nepodařilo připojit. Položku najdete v seznamu vlevo.",
+        );
+        if (fileRef.current) fileRef.current.value = "";
+        setPhotoPath(null);
+        if (preview) URL.revokeObjectURL(preview);
+        setPreview(null);
+        startTransition(() => router.refresh());
+        return;
+      }
+
+      // Položka je uložená → cestu k fotce už nepovažujeme za „orphan",
+      // proto reset bez mazání ze storage.
+      reset({ keepPath: photoPath });
       startTransition(() => {
         router.push(`/majetek/${asset.id}`);
         router.refresh();
@@ -289,16 +327,29 @@ export function PhotoCapture({
               </label>
             </div>
 
-            <label className="block">
-              <span className="mb-1 block text-xs font-medium text-ink-soft">
-                Místnost
-              </span>
-              <Input
-                value={room}
-                onChange={(e) => setRoom(e.target.value)}
-                placeholder="např. Koupelna"
-              />
-            </label>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <label className="block">
+                <span className="mb-1 block text-xs font-medium text-ink-soft">
+                  Model
+                </span>
+                <Input
+                  value={model}
+                  onChange={(e) => setModel(e.target.value)}
+                  placeholder="např. WAN28160"
+                />
+              </label>
+
+              <label className="block">
+                <span className="mb-1 block text-xs font-medium text-ink-soft">
+                  Místnost
+                </span>
+                <Input
+                  value={room}
+                  onChange={(e) => setRoom(e.target.value)}
+                  placeholder="např. Koupelna"
+                />
+              </label>
+            </div>
 
             <p className="rounded-md bg-surface-2 px-3 py-2 text-xs text-muted">
               Toto je automatický návrh z fotky. Zkontrolujte hodnoty a potvrzením
@@ -327,7 +378,7 @@ export function PhotoCapture({
                 type="button"
                 variant="ghost"
                 disabled={busy}
-                onClick={reset}
+                onClick={() => reset()}
               >
                 <RotateCcw size={15} /> Začít znovu
               </Button>

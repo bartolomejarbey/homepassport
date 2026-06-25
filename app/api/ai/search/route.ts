@@ -10,9 +10,10 @@ import { embed, ragAnswer } from "@/lib/ai";
 
 const Body = z.object({ query: z.string().trim().min(2).max(500) });
 
-// Zdroj citace odkazuje zpět na konkrétní dokument nebo položku majetku.
+// Zdroj citace odkazuje zpět na konkrétní dokument, položku majetku nebo
+// připomínku (revize/záruka). Detail se otevře na příslušné stránce.
 type Source = {
-  kind: "document" | "asset";
+  kind: "document" | "asset" | "reminder";
   id: string;
   title: string;
   href: string;
@@ -126,10 +127,15 @@ export async function POST(request: Request) {
       chunks.map((c) => ({ id: c.id, text: c.text })),
     );
   } catch {
-    return NextResponse.json(
-      { error: "Asistent je dočasně nedostupný. Zkuste to prosím za chvíli." },
-      { status: 502 },
-    );
+    // Sumarizátor je nedostupný (např. výpadek AI), ale relevantní záznamy jsme
+    // našli. Místo slepé chyby vrátíme alespoň nalezené zdroje s odkazy — hledání
+    // tak zůstane užitečné i bez AI shrnutí.
+    return NextResponse.json({
+      answer:
+        "Souhrn od asistenta je teď nedostupný, ale ve vašich datech jsem našel tyto relevantní záznamy:",
+      sources: dedupeSources(chunks.map((c) => c.source)),
+      disclaimer: DISCLAIMER,
+    });
   }
 
   // Mapuj indexy citací (1-based z ragAnswer) zpět na konkrétní zdroje.
@@ -193,7 +199,7 @@ async function textSearch(
   const out: Chunk[] = [];
   const seenDocs = new Set<string>();
 
-  const [docsRes, extrRes, assetsRes] = await Promise.all([
+  const [docsRes, extrRes, assetsRes, remindersRes] = await Promise.all([
     sb
       .from("documents")
       .select("id, title, category")
@@ -201,12 +207,14 @@ async function textSearch(
       .ilike("title", like)
       .limit(half),
     // Výtahy z dokumentů (souhrn) — sem se ukládá AI extrakce s reálným obsahem.
+    // Bereme jen potvrzené (uživatel je odsouhlasil) a od nejnovějších.
     sb
       .from("document_extractions")
-      .select("document_id, extracted, documents!inner(id, title, household_id)")
+      .select("document_id, extracted, created_at, documents!inner(id, title, household_id)")
       .eq("documents.household_id", householdId)
       .eq("status", "confirmed")
-      .limit(half),
+      .order("created_at", { ascending: false })
+      .limit(MAX_CHUNKS),
     sb
       .from("assets")
       .select("id, name, brand, model, room, category")
@@ -216,19 +224,20 @@ async function textSearch(
         `name.ilike.${like},brand.ilike.${like},model.ilike.${like},room.ilike.${like}`,
       )
       .limit(half),
+    // Otevřené připomínky (revize, záruky, servis) — odpovídají na „kdy mám…",
+    // „mám revizi…". Wording si neseme čestně dle wording_type (viz remindersToChunks).
+    sb
+      .from("reminders")
+      .select("id, type, title, due_date, wording_type, legal_basis, status")
+      .eq("household_id", householdId)
+      .eq("status", "open")
+      .ilike("title", like)
+      .limit(half),
   ]);
 
-  for (const d of docsRes.data ?? []) {
-    if (seenDocs.has(d.id)) continue;
-    seenDocs.add(d.id);
-    const title = d.title ?? "Dokument";
-    out.push({
-      id: `doc:${d.id}`,
-      text: `Dokument „${title}" (kategorie: ${d.category}).`,
-      source: { kind: "document", id: d.id, title, href: `/dokumenty/${d.id}` },
-    });
-  }
-
+  // Pořadí dle bohatosti obsahu: extrakce (reálná data z dokumentů) → připomínky
+  // → dokumenty podle názvu → majetek. Při ořezu na MAX_CHUNKS tak zůstanou
+  // nejvíce odpovídající úryvky, ne jen shody v názvu.
   for (const e of extrRes.data ?? []) {
     // Vnořený vztah může přijít jako objekt nebo jednoprvkové pole — ošetříme obojí.
     const rel = (e as { documents?: unknown }).documents;
@@ -254,6 +263,21 @@ async function textSearch(
     });
   }
 
+  for (const r of (remindersRes.data ?? []) as ReminderRow[]) {
+    out.push(reminderToChunk(r));
+  }
+
+  for (const d of docsRes.data ?? []) {
+    if (seenDocs.has(d.id)) continue;
+    seenDocs.add(d.id);
+    const title = d.title ?? "Dokument";
+    out.push({
+      id: `doc:${d.id}`,
+      text: `Dokument „${title}" (kategorie: ${d.category}).`,
+      source: { kind: "document", id: d.id, title, href: `/dokumenty/${d.id}` },
+    });
+  }
+
   for (const a of assetsRes.data ?? []) {
     const parts = [a.brand, a.model, a.room ? `místnost ${a.room}` : null]
       .filter(Boolean)
@@ -266,6 +290,38 @@ async function textSearch(
   }
 
   return out.slice(0, MAX_CHUNKS);
+}
+
+// Připomínka → citovatelný úryvek. Wording neseme ČESTNĚ dle wording_type:
+// jen 'legal_required' smí znít jako povinnost ze zákona. Tím dáme RAG kroku
+// pravdivý podklad a nesvádíme model k vymýšlení právních povinností.
+type ReminderRow = {
+  id: string;
+  type: string | null;
+  title: string;
+  due_date: string | null;
+  wording_type: "legal_required" | "recommended" | "insurance_recommended";
+  legal_basis: string | null;
+  status: string | null;
+};
+
+const WORDING_LABEL: Record<ReminderRow["wording_type"], string> = {
+  legal_required: "povinné ze zákona",
+  recommended: "doporučené (bezpečnost a životnost)",
+  insurance_recommended: "doporučené kvůli pojišťovně",
+};
+
+function reminderToChunk(r: ReminderRow): Chunk {
+  const bits: string[] = [`Připomínka „${r.title}"`];
+  if (r.due_date) bits.push(`termín ${r.due_date}`);
+  bits.push(`charakter: ${WORDING_LABEL[r.wording_type] ?? "doporučené"}`);
+  if (r.wording_type === "legal_required" && r.legal_basis)
+    bits.push(`právní základ: ${r.legal_basis}`);
+  return {
+    id: `reminder:${r.id}`,
+    text: bits.join("; ") + ".",
+    source: { kind: "reminder", id: r.id, title: r.title, href: "/pripominky" },
+  };
 }
 
 // Z extrakce (jsonb) sestav stručný, citovatelný text — jen pole, která dávají

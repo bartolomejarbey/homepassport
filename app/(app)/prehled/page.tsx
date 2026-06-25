@@ -75,11 +75,13 @@ export default async function PrehledPage() {
         .from("documents")
         .select("id", { count: "exact", head: true })
         .eq("household_id", householdId),
+      // "Otevřené" = open i snoozed — stejně, jako je seskupuje stránka /pripominky,
+      // aby číslo na dlaždici sedělo s tím, co uživatel po prokliku uvidí.
       sb
         .from("reminders")
         .select("id", { count: "exact", head: true })
         .eq("household_id", householdId)
-        .eq("status", "open"),
+        .in("status", ["open", "snoozed"]),
       sb
         .from("assets")
         .select("id", { count: "exact", head: true })

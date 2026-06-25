@@ -2,7 +2,6 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { redirect } from "next/navigation";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -80,8 +79,21 @@ export async function createProperty(input: unknown): Promise<CreatePropertyResu
     return { ok: false, error: "Nemovitost se nepodařilo přiřadit k domácnosti." };
   }
 
-  // Seed an empty context row so the questionnaire has a stable target.
-  await admin.from("property_contexts").insert({ property_id: property.id });
+  // Seed a context row so the questionnaire has a stable upsert target.
+  // IMPORTANT: usage flags must start all-false. The column default for
+  // owner_occupied is `true`, which would make a never-filled context read as
+  // "done" on the detail page and hide the "Doplňte kontext" nudge. We seed an
+  // explicitly empty usage so the nudge shows until the user actually answers.
+  // has_electrical stays true (most homes have it) to match the questionnaire's
+  // sensible default.
+  await admin.from("property_contexts").insert({
+    property_id: property.id,
+    owner_occupied: false,
+    rental: false,
+    svj: false,
+    business_use: false,
+    has_electrical: true,
+  });
 
   await admin.from("audit_events").insert({
     actor_id: user.id,
@@ -144,7 +156,8 @@ export async function updatePropertyContext(input: unknown): Promise<UpdateConte
     return { ok: false, error: "Kontext se nepodařilo uložit. Zkuste to prosím znovu." };
   }
 
-  await sb.from("audit_events").insert({
+  // audit_events má jen SELECT policy (RLS); zápis proto vede přes service role.
+  await createAdminClient().from("audit_events").insert({
     actor_id: user.id,
     property_id,
     action: "property.context_updated",
@@ -154,11 +167,4 @@ export async function updatePropertyContext(input: unknown): Promise<UpdateConte
   revalidatePath(`/nemovitost/${property_id}`);
   revalidatePath(`/nemovitost/${property_id}/kontext`);
   return { ok: true };
-}
-
-// Convenience server action used by the create dialog: create then redirect to detail.
-export async function createPropertyAndRedirect(input: unknown) {
-  const res = await createProperty(input);
-  if (res.ok) redirect(`/nemovitost/${res.id}`);
-  return res;
 }

@@ -7,7 +7,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { CreateOrgForm } from "../../_components/CreateOrgForm";
 import { CreatePropertyDialog } from "../../_components/CreatePropertyDialog";
 import { PropertyList } from "../../_components/PropertyList";
-import { getMyOrgs, getOrgProperties } from "../../_components/data";
+import { getMyOrgs, getOrgProperties, getOrgHandoverStats } from "../../_components/data";
 
 export const metadata = { title: "Pro firmy — Home Passport" };
 
@@ -36,9 +36,14 @@ export default async function ProDashboardPage() {
   // MVP: work with the first org. (Org switcher can come later.)
   const org = orgs[0];
   const properties = await getOrgProperties(org.id);
+  const handover = await getOrgHandoverStats(properties.map((p) => p.id));
 
-  const draftCount = properties.filter((p) => p.status === "draft").length;
-  const transferredCount = properties.filter((p) => p.status === "transferred").length;
+  // "Handed over" = accepted invitation, not property.status (which becomes
+  // 'active' on the buyer side after accept — see getOrgHandoverStats).
+  const transferredCount = handover.handedOver.size;
+  const draftCount = properties.filter(
+    (p) => p.status === "draft" && !handover.handedOver.has(p.id),
+  ).length;
 
   return (
     <div className="space-y-8">
@@ -108,7 +113,11 @@ export default async function ProDashboardPage() {
             hint="Vytvořte první pas nemovitosti. Pak k němu jen nahrajete dokumenty a AI je roztřídí."
           />
         ) : (
-          <PropertyList properties={properties.slice(0, 5)} />
+          <PropertyList
+            properties={properties.slice(0, 5)}
+            handedOver={handover.handedOver}
+            pending={handover.pending}
+          />
         )}
       </section>
     </div>

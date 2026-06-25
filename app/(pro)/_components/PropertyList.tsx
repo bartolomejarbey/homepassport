@@ -3,7 +3,7 @@
 // the handover dialog to generate a buyer link. Server component; the dialog is the
 // only interactive island.
 import Link from "next/link";
-import { Home, MapPin, UploadCloud } from "lucide-react";
+import { Home, MapPin, UploadCloud, CheckCircle2, Clock } from "lucide-react";
 import { HandoverDialog } from "./HandoverDialog";
 import {
   type ProProperty,
@@ -20,12 +20,24 @@ const STATUS_PILL: Record<string, string> = {
   archived: "bg-surface-2 text-muted",
 };
 
-export function PropertyList({ properties }: { properties: ProProperty[] }) {
+export function PropertyList({
+  properties,
+  handedOver,
+  pending,
+}: {
+  properties: ProProperty[];
+  /** property_ids that already reached a buyer (accepted invitation). */
+  handedOver?: Set<string>;
+  /** property_ids with a live invite waiting on the buyer to accept. */
+  pending?: Set<string>;
+}) {
   return (
     <ul className="space-y-3">
       {properties.map((p) => {
         const address = formatAddress(p);
         const label = propertyName(p);
+        const isHandedOver = handedOver?.has(p.id) ?? false;
+        const isPending = !isHandedOver && (pending?.has(p.id) ?? false);
         return (
           <li key={p.id}>
             <div className="card flex flex-col gap-4 p-5 sm:flex-row sm:items-center">
@@ -38,11 +50,22 @@ export function PropertyList({ properties }: { properties: ProProperty[] }) {
                   <p className="truncate font-display text-lg font-semibold text-ink">
                     {label}
                   </p>
-                  <span
-                    className={`badge ${STATUS_PILL[p.status] ?? "bg-surface-2 text-muted"}`}
-                  >
-                    {STATUS_LABELS[p.status] ?? p.status}
-                  </span>
+                  {isHandedOver ? (
+                    <span className="badge bg-honey-100 text-honey-600">
+                      <CheckCircle2 size={12} /> Předáno kupujícímu
+                    </span>
+                  ) : (
+                    <span
+                      className={`badge ${STATUS_PILL[p.status] ?? "bg-surface-2 text-muted"}`}
+                    >
+                      {STATUS_LABELS[p.status] ?? p.status}
+                    </span>
+                  )}
+                  {isPending && (
+                    <span className="badge bg-teal-100 text-teal">
+                      <Clock size={12} /> Odkaz čeká na kupujícího
+                    </span>
+                  )}
                 </div>
                 <p className="mt-0.5 flex items-center gap-1.5 text-sm text-ink-soft">
                   <span className="text-muted">{TYPE_LABELS[p.type] ?? "Nemovitost"}</span>
@@ -64,7 +87,17 @@ export function PropertyList({ properties }: { properties: ProProperty[] }) {
                   <UploadCloud size={15} />
                   Nahrát dokumenty
                 </Link>
-                <HandoverDialog propertyId={p.id} propertyLabel={label} />
+                {isHandedOver ? (
+                  <span className="inline-flex items-center gap-1.5 px-2 text-sm font-medium text-teal">
+                    <CheckCircle2 size={15} /> Předáno
+                  </span>
+                ) : (
+                  <HandoverDialog
+                    propertyId={p.id}
+                    propertyLabel={label}
+                    hasPendingInvite={isPending}
+                  />
+                )}
               </div>
             </div>
           </li>

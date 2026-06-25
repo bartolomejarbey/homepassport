@@ -5,9 +5,12 @@
 // vzorec jako při zakládání nemovitosti.
 //
 // Krok po kroku: ověř přihlášení -> validuj token (existuje, pending, neexpiroval)
-// -> najdi domácnost kupujícího -> propoj property_owners -> nastav pozvánku
-// 'accepted' a nemovitost 'active' -> zapiš audit_event. Přenáší se POUZE
-// nemovitost (přenosná vrstva), nikdy soukromá data původního majitele.
+// -> najdi domácnost kupujícího -> claimni pozvánku atomicky ('pending'->'accepted')
+// -> propoj property_owners -> přesuň přenosné dokumenty do household kupujícího
+// (storage prefix + documents.file_path/household_id) -> nastav nemovitost 'active'
+// -> zapiš audit_event. Přenáší se POUZE nemovitost (přenosná vrstva), nikdy
+// soukromá data původního majitele. Celý tok je idempotentní: opakované převzetí
+// tímtéž uživatelem jen dožene případně nedokončený přesun souborů.
 //
 // Přijímá JSON (fetch -> vrací JSON) i form-encoded (progressive enhancement ze
 // stránky /prevzit/[token] -> přesměrovává na detail nebo zpět s ?error=).
@@ -84,21 +87,26 @@ export async function POST(request: Request) {
   if (invErr) return fail("failed", "Pozvánku se nepodařilo načíst", 500);
   if (!invitation) return fail("failed", "Pozvánka neexistuje", 404);
 
-  // 3) Validace stavu pozvánky.
-  if (invitation.status === "accepted") {
-    // Idempotence: pokud ji převzal tentýž uživatel, ber to jako úspěch.
-    if (invitation.accepted_by === user.id) {
-      return succeed(invitation.property_id, { alreadyAccepted: true });
-    }
+  // 3) Stavy, které končí dřív, než cokoli zapíšeme (kromě idempotentního
+  //    re-accept tímtéž uživatelem — ten propadne dolů k dokončení, aby se
+  //    případný dříve nedokončený přesun dokumentů dohnal).
+  const alreadyAcceptedBySelf =
+    invitation.status === "accepted" && invitation.accepted_by === user.id;
+
+  if (invitation.status === "accepted" && !alreadyAcceptedBySelf) {
     return fail("taken", "Tato pozvánka už byla uplatněna.", 409);
   }
   if (invitation.status === "revoked") {
     return fail("failed", "Pozvánka byla zrušena.", 410);
   }
-  if (invitation.status !== "pending") {
+  if (invitation.status !== "pending" && !alreadyAcceptedBySelf) {
     return fail("failed", "Pozvánka už není platná.", 410);
   }
-  if (invitation.expires_at && new Date(invitation.expires_at).getTime() < Date.now()) {
+  if (
+    !alreadyAcceptedBySelf &&
+    invitation.expires_at &&
+    new Date(invitation.expires_at).getTime() < Date.now()
+  ) {
     // Zaznamenej expiraci, ať se stav zhmotní i v DB.
     await admin
       .from("handover_invitations")
@@ -120,7 +128,32 @@ export async function POST(request: Request) {
     return fail("nohousehold", "Nemáte založenou domácnost. Obnovte prosím stránku.", 409);
   }
 
-  // 5) Propoj nemovitost s domácností kupujícího (přenosná vrstva přechází).
+  // 5) Pozvánku claimni ATOMICKY jako úplně první zápis (update jen z 'pending').
+  //    Tím se souběh vyřeší dřív, než cokoli přesuneme: případný "poražený"
+  //    request se zde zastaví a nesáhne na property_owners ani na úložiště.
+  //    Idempotentní re-accept tímtéž uživatelem claim přeskočí (už ho vlastní)
+  //    a rovnou dokončí zbytek — to dělá celý tok bezpečně opakovatelný.
+  if (!alreadyAcceptedBySelf) {
+    const { data: claimed, error: claimErr } = await admin
+      .from("handover_invitations")
+      .update({
+        status: "accepted",
+        accepted_by: user.id,
+        accepted_at: new Date().toISOString(),
+      })
+      .eq("id", invitation.id)
+      .eq("status", "pending")
+      .select("id")
+      .maybeSingle();
+
+    if (claimErr) return fail("failed", "Převzetí se nepodařilo dokončit.", 500);
+    if (!claimed) {
+      // Někdo jiný stihl pozvánku uplatnit mezi naším čtením a zápisem.
+      return fail("taken", "Tato pozvánka už byla uplatněna.", 409);
+    }
+  }
+
+  // 6) Propoj nemovitost s domácností kupujícího (přenosná vrstva přechází).
   //    onConflict: kdyby vazba náhodou existovala, převzetí proběhne idempotentně.
   const { error: linkErr } = await admin
     .from("property_owners")
@@ -132,39 +165,79 @@ export async function POST(request: Request) {
     return fail("failed", "Nemovitost se nepodařilo přiřadit k vaší domácnosti.", 500);
   }
 
-  // 6) Pozvánka -> accepted (atomicky jen z 'pending', ochrana proti souběhu).
-  const { data: claimed, error: claimErr } = await admin
-    .from("handover_invitations")
-    .update({
-      status: "accepted",
-      accepted_by: user.id,
-      accepted_at: new Date().toISOString(),
-    })
-    .eq("id", invitation.id)
-    .eq("status", "pending")
-    .select("id")
-    .maybeSingle();
+  // 7) Přenosné dokumenty přesměruj do domácnosti kupujícího.
+  //
+  //     Storage RLS (storage_household_ok) hlídá přístup podle PRVNÍHO segmentu
+  //     cesty = <household_id>. Přenosné soubory byly nahrány pod household
+  //     PRODÁVAJÍCÍHO, takže by je kupující po převzetí přes RLS-respecting
+  //     klienta (/dokumenty, /nemovitost) neotevřel. Proto fyzicky přesuneme
+  //     objekt pod prefix <buyer_household>/ a přepíšeme documents.file_path +
+  //     documents.household_id. Tím přenos skutečně "funguje" — kupující soubory
+  //     vidí svými běžnými toky, ne jen přes podpisy z této stránky.
+  //
+  //     Best-effort & idempotentní: soubor už pod správným prefixem přeskočíme;
+  //     dílčí selhání přesunu zalogujeme do auditu, ale převzetí jím nerušíme —
+  //     metadata i nemovitost přejdou tak jako tak a podpisy adminem fungují dál.
+  const { data: transferableDocs } = await admin
+    .from("documents")
+    .select("id, file_path, household_id")
+    .eq("property_id", invitation.property_id)
+    .eq("transferable", true);
 
-  if (claimErr) return fail("failed", "Převzetí se nepodařilo dokončit.", 500);
-  if (!claimed) {
-    // Někdo jiný stihl pozvánku uplatnit mezi naším čtením a zápisem.
-    return fail("taken", "Tato pozvánka už byla uplatněna.", 409);
+  const moveFailures: { id: string; error: string }[] = [];
+  for (const doc of transferableDocs ?? []) {
+    if (!doc.file_path) continue;
+    const segments = doc.file_path.split("/");
+
+    // Už pod správným prefixem (re-run / idempotence): jen srovnej household_id.
+    if (segments[0] === householdId) {
+      if (doc.household_id !== householdId) {
+        await admin.from("documents").update({ household_id: householdId }).eq("id", doc.id);
+      }
+      continue;
+    }
+
+    // Cesta bez prvního (household) segmentu — zůstává stejný název i podsložky.
+    const tail = segments.slice(1).join("/") || segments.join("/");
+    const newPath = `${householdId}/${tail}`;
+
+    const { error: moveErr } = await admin.storage
+      .from("documents")
+      .move(doc.file_path, newPath);
+
+    // "already exists" bereme jako úspěch — objekt už na cílové cestě je.
+    const alreadyThere = moveErr?.message?.toLowerCase().includes("exists");
+    if (moveErr && !alreadyThere) {
+      moveFailures.push({ id: doc.id, error: moveErr.message });
+      continue;
+    }
+
+    const { error: updErr } = await admin
+      .from("documents")
+      .update({ file_path: newPath, household_id: householdId })
+      .eq("id", doc.id);
+    if (updErr) moveFailures.push({ id: doc.id, error: updErr.message });
   }
 
-  // 7) Nemovitost -> active (z draft / transferred po předchozím prodeji).
+  // 8) Nemovitost -> active (z draft / transferred po předchozím prodeji).
   await admin
     .from("properties")
     .update({ status: "active" })
     .eq("id", invitation.property_id);
 
-  // 8) Audit: kdo, kdy, co převzal.
+  // 9) Audit: kdo, kdy, co převzal. Zaznamenáme i počet přenesených dokumentů
+  //    a případná dílčí selhání přesunu souborů (pro pozdější dohledání).
   await admin.from("audit_events").insert({
     actor_id: user.id,
     household_id: householdId,
     property_id: invitation.property_id,
-    action: "handover.accepted",
-    target: { invitation_id: invitation.id },
+    action: alreadyAcceptedBySelf ? "handover.reconciled" : "handover.accepted",
+    target: {
+      invitation_id: invitation.id,
+      documents_transferred: transferableDocs?.length ?? 0,
+      ...(moveFailures.length > 0 ? { document_move_failures: moveFailures } : {}),
+    },
   });
 
-  return succeed(invitation.property_id);
+  return succeed(invitation.property_id, alreadyAcceptedBySelf ? { alreadyAccepted: true } : undefined);
 }

@@ -13,9 +13,12 @@ type Invite = { url: string; buyerEmail: string; expiresAt: string | null };
 export function HandoverDialog({
   propertyId,
   propertyLabel,
+  hasPendingInvite = false,
 }: {
   propertyId: string;
   propertyLabel: string;
+  /** A live invite is already out for this property (informational note only). */
+  hasPendingInvite?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -147,6 +150,16 @@ export function HandoverDialog({
                   přenositelné, kontext nemovitosti i revize. Soukromá data domácnosti
                   se nepředávají.
                 </p>
+
+                {hasPendingInvite && (
+                  <div className="flex items-start gap-2 rounded-md border border-teal/30 bg-teal-100/60 px-3 py-2 text-sm text-teal">
+                    <AlertCircle size={16} className="mt-0.5 shrink-0" />
+                    <span>
+                      Pro tuto nemovitost už máte aktivní odkaz čekající na kupujícího.
+                      Nový odkaz vystavíte jen, pokud chcete předat jinému kupujícímu.
+                    </span>
+                  </div>
+                )}
 
                 {error && (
                   <div className="flex items-start gap-2 rounded-md border border-line bg-rust-100 px-3 py-2 text-sm text-rust">

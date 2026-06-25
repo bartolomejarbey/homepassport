@@ -92,6 +92,11 @@ export function ReminderCard({ reminder }: { reminder: ReminderRow }) {
             >
               <CalendarClock size={12} /> {due.label}
             </span>
+            {reminder.status === "snoozed" && (
+              <span className="inline-flex items-center gap-1 text-xs text-muted">
+                <AlarmClockOff size={12} /> odloženo
+              </span>
+            )}
           </div>
 
           <p className="mt-2 text-sm font-medium text-ink">{reminder.title}</p>

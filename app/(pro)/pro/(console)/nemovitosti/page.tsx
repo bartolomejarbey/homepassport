@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { CreatePropertyDialog } from "../../../_components/CreatePropertyDialog";
 import { PropertyList } from "../../../_components/PropertyList";
-import { getMyOrgs, getOrgProperties } from "../../../_components/data";
+import { getMyOrgs, getOrgProperties, getOrgHandoverStats } from "../../../_components/data";
 
 export const metadata = { title: "Nemovitosti — Pro firmy" };
 
@@ -14,6 +14,7 @@ export default async function ProPropertiesPage() {
 
   const org = orgs[0];
   const properties = await getOrgProperties(org.id);
+  const handover = await getOrgHandoverStats(properties.map((p) => p.id));
 
   return (
     <div className="space-y-6">
@@ -37,7 +38,11 @@ export default async function ProPropertiesPage() {
           hint="Vytvořte první pas nemovitosti — stačí typ. Detaily doplní AI z nahraných dokumentů."
         />
       ) : (
-        <PropertyList properties={properties} />
+        <PropertyList
+          properties={properties}
+          handedOver={handover.handedOver}
+          pending={handover.pending}
+        />
       )}
     </div>
   );

@@ -92,12 +92,14 @@ export default async function NemovitostDetailPage({
       .select("id", { count: "exact", head: true })
       .eq("property_id", id)
       .eq("transferable", false),
-    // Open contextual reminders for this property (revize hub).
+    // Open contextual reminders for this property (revize hub). "Otevřené" =
+    // open i snoozed — stejně jako je seskupuje /pripominky a počítá /prehled,
+    // aby číslo sedělo s tím, co uživatel po prokliku uvidí.
     sb
       .from("reminders")
       .select("id", { count: "exact", head: true })
       .eq("property_id", id)
-      .eq("status", "open"),
+      .in("status", ["open", "snoozed"]),
   ]);
 
   const sections = (sectionsRaw ?? []) as PassportSectionRow[];

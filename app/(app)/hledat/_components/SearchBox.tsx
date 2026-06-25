@@ -10,6 +10,7 @@ import {
   AlertCircle,
   FileText,
   Package,
+  BellRing,
   Info,
   ArrowRight,
 } from "lucide-react";
@@ -18,11 +19,17 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 
 type Source = {
-  kind: "document" | "asset";
+  kind: "document" | "asset" | "reminder";
   id: string;
   title: string;
   href: string;
 };
+
+const SOURCE_ICON = {
+  document: FileText,
+  asset: Package,
+  reminder: BellRing,
+} as const;
 type SearchResult = {
   answer: string;
   sources: Source[];
@@ -143,19 +150,17 @@ export function SearchBox() {
                   Zdroje
                 </p>
                 <ul className="space-y-1.5">
-                  {result.sources.map((s) => (
+                  {result.sources.map((s) => {
+                    const Icon = SOURCE_ICON[s.kind] ?? FileText;
+                    return (
                     <li key={`${s.kind}:${s.id}`}>
                       <Link
-                        // Běhová cesta na detail dokumentu/majetku (/dokumenty/:id,
-                        // /majetek/:id). typedRoutes je vypnuté → stačí string.
+                        // Běhová cesta na detail zdroje (/dokumenty/:id, /majetek/:id,
+                        // /pripominky). typedRoutes je vypnuté → stačí string.
                         href={s.href}
                         className="group flex items-center gap-2 text-sm text-navy hover:underline"
                       >
-                        {s.kind === "document" ? (
-                          <FileText size={14} className="shrink-0 text-honey" />
-                        ) : (
-                          <Package size={14} className="shrink-0 text-honey" />
-                        )}
+                        <Icon size={14} className="shrink-0 text-honey" />
                         <span className="truncate">{s.title}</span>
                         <ArrowRight
                           size={13}
@@ -163,7 +168,8 @@ export function SearchBox() {
                         />
                       </Link>
                     </li>
-                  ))}
+                    );
+                  })}
                 </ul>
               </div>
             )}
