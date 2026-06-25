@@ -1,7 +1,8 @@
 // POST /api/ai/search — přirozený dotaz NAD VLASTNÍMI daty uživatele.
 // 1) embed(dotaz) → 2) najdi nejbližší úryvky pro domácnost (pgvector cosine přes RPC,
-// fallback ILIKE nad documents/assets) → 3) ragAnswer() s citacemi. Nikdy
-// neodpovídá mimo data uživatele: bez podkladů vrátíme prázdnou odpověď.
+//    fallback: textové hledání nad embeddings.chunk_text → documents/extractions/assets)
+// 3) ragAnswer() s citacemi. Nikdy neodpovídá mimo data uživatele: bez podkladů
+//    vrátíme prázdnou odpověď. Veškeré dotazy běží pod RLS přihlášeného uživatele.
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
@@ -19,6 +20,8 @@ type Source = {
 type Chunk = { id: string; text: string; source: Source };
 
 const MAX_CHUNKS = 8;
+const DISCLAIMER =
+  "Asistent odpovídá pouze na základě vašich vlastních dokumentů a majetku. Nejde o právní radu.";
 
 export async function POST(request: Request) {
   // RLS běží pod přihlášeným uživatelem — bez přihlášení nic nevidíme.
@@ -48,23 +51,20 @@ export async function POST(request: Request) {
   const householdId = membership?.household_id ?? null;
   if (!householdId) {
     return NextResponse.json({
-      answer: "Zatím nemáte žádná data, ve kterých bych mohl hledat.",
+      answer:
+        "Zatím nemáte žádnou domácnost s daty, ve kterých bych mohl hledat. Až nahrajete dokumenty nebo přidáte majetek, vrátím se k vašemu dotazu.",
       sources: [],
-      disclaimer:
-        "Asistent odpovídá pouze na základě vašich vlastních dokumentů a majetku.",
+      disclaimer: DISCLAIMER,
     });
   }
 
-  // Doprovodné metadaty pro převod embeddings → citovatelný zdroj.
-  const docTitles = new Map<string, string>();
-  const assetTitles = new Map<string, string>();
-
   let chunks: Chunk[] = [];
 
-  // --- 1) Sémantické vyhledávání přes pgvector (cosine) ---------------------
+  // --- 1) Sémantické vyhledávání přes pgvector (cosine, RPC) -----------------
+  // RPC match_embeddings je SECURITY INVOKER → respektuje RLS domácnosti.
+  // Pokud RPC v nasazení neexistuje, vrátí chybu a my spadneme na fallback níže.
   try {
     const queryEmbedding = await embed(query);
-    // RPC match_embeddings je SECURITY INVOKER → respektuje RLS domácnosti.
     const { data: matches, error: rpcErr } = await sb.rpc("match_embeddings", {
       query_embedding: queryEmbedding,
       match_household_id: householdId,
@@ -79,73 +79,42 @@ export async function POST(request: Request) {
     // Embedding nebo RPC nedostupné — spadneme na textový fallback níže.
   }
 
-  // --- 2) Fallback: ILIKE nad documents + assets ----------------------------
-  // Spustí se, když ještě nejsou žádné embeddings (nebo selhal sémantický krok).
+  // --- 2) Fallback A: textové hledání přímo nad embeddings.chunk_text --------
+  // Spustí se, když RPC chybí, ale embeddings (úryvky textu) už existují —
+  // tak dáme RAG kroku skutečný obsah dokumentů, ne jen názvy.
   if (chunks.length === 0) {
-    const like = `%${query.replace(/[%_]/g, (m) => `\\${m}`)}%`;
-    const half = Math.ceil(MAX_CHUNKS / 2);
-
-    const [{ data: docs }, { data: assets }] = await Promise.all([
-      sb
-        .from("documents")
-        .select("id, title, category")
+    const like = ilikePattern(query);
+    if (like) {
+      const { data: rows } = await sb
+        .from("embeddings")
+        .select("id, document_id, asset_id, chunk_text, metadata")
         .eq("household_id", householdId)
-        .ilike("title", like)
-        .limit(half),
-      sb
-        .from("assets")
-        .select("id, name, brand, model, room, category")
-        .eq("household_id", householdId)
-        .or(
-          `name.ilike.${like},brand.ilike.${like},model.ilike.${like},room.ilike.${like}`,
-        )
-        .limit(half),
-    ]);
+        .ilike("chunk_text", like)
+        .limit(MAX_CHUNKS);
+      chunks = (rows ?? [])
+        .map((r) => rowToChunk(r as EmbeddingMatch))
+        .filter((c): c is Chunk => c !== null);
+    }
+  }
 
-    for (const d of docs ?? []) {
-      const title = d.title ?? "Dokument";
-      docTitles.set(d.id, title);
-      chunks.push({
-        id: `doc:${d.id}`,
-        text: `Dokument „${title}" (kategorie: ${d.category}).`,
-        source: {
-          kind: "document",
-          id: d.id,
-          title,
-          href: `/dokumenty/${d.id}`,
-        },
-      });
-    }
-    for (const a of assets ?? []) {
-      assetTitles.set(a.id, a.name);
-      const parts = [a.brand, a.model, a.room ? `místnost ${a.room}` : null]
-        .filter(Boolean)
-        .join(", ");
-      chunks.push({
-        id: `asset:${a.id}`,
-        text: `Položka majetku „${a.name}"${parts ? ` (${parts})` : ""}.`,
-        source: {
-          kind: "asset",
-          id: a.id,
-          title: a.name,
-          href: `/majetek/${a.id}`,
-        },
-      });
-    }
+  // --- 3) Fallback B: ILIKE nad documents (+ extrakce) a assets -------------
+  // Poslední záchrana, když ještě nejsou žádné embeddings — hledáme v názvech
+  // a ve strukturovaných výtazích dokumentů, plus v polích majetku.
+  if (chunks.length === 0) {
+    chunks = await textSearch(sb, householdId, query);
   }
 
   // Žádné podklady → neodpovídáme z obecných znalostí (princip: jen vlastní data).
   if (chunks.length === 0) {
     return NextResponse.json({
       answer:
-        "K tomuto dotazu jsem ve vašich dokumentech ani v majetku nic nenašel.",
+        "K tomuto dotazu jsem ve vašich dokumentech ani v majetku nic nenašel. Zkuste dotaz přeformulovat, nebo nejdřív nahrajte příslušný dokument.",
       sources: [],
-      disclaimer:
-        "Asistent odpovídá pouze na základě vašich vlastních dokumentů a majetku.",
+      disclaimer: DISCLAIMER,
     });
   }
 
-  // --- 3) RAG odpověď s citacemi -------------------------------------------
+  // --- 4) RAG odpověď s citacemi -------------------------------------------
   let result: {
     answer?: string;
     sources?: number[];
@@ -158,7 +127,7 @@ export async function POST(request: Request) {
     );
   } catch {
     return NextResponse.json(
-      { error: "Asistent je dočasně nedostupný" },
+      { error: "Asistent je dočasně nedostupný. Zkuste to prosím za chvíli." },
       { status: 502 },
     );
   }
@@ -176,13 +145,13 @@ export async function POST(request: Request) {
   return NextResponse.json({
     answer:
       typeof result.answer === "string" && result.answer.trim()
-        ? result.answer
+        ? result.answer.trim()
         : "K tomuto dotazu nemám ve vašich datech jednoznačnou odpověď.",
     sources,
     disclaimer:
       typeof result.disclaimer === "string" && result.disclaimer.trim()
-        ? result.disclaimer
-        : "Asistent odpovídá pouze na základě vašich vlastních dokumentů a majetku. Nejde o právní radu.",
+        ? result.disclaimer.trim()
+        : DISCLAIMER,
   });
 }
 
@@ -194,6 +163,129 @@ type EmbeddingMatch = {
   chunk_text: string | null;
   metadata: { title?: string; name?: string } | null;
 };
+
+type SupaClient = Awaited<ReturnType<typeof createClient>>;
+
+// Vytvoř bezpečný ILIKE vzor: escapuj zástupné znaky a odstraň znaky, které
+// rozbíjejí PostgREST `.or(...)` filtr (čárky a závorky fungují jako oddělovače).
+function ilikePattern(q: string): string | null {
+  const safe = q
+    .replace(/[%_\\]/g, (m) => `\\${m}`)
+    .replace(/[(),]/g, " ")
+    .trim();
+  return safe ? `%${safe}%` : null;
+}
+
+// Textový fallback nad documents (+ výtahy z extrakcí) a assets.
+async function textSearch(
+  sb: SupaClient,
+  householdId: string,
+  query: string,
+): Promise<Chunk[]> {
+  const like = ilikePattern(query);
+  if (!like) return [];
+  const half = Math.ceil(MAX_CHUNKS / 2);
+  // Klíčová slova dotazu (≥3 znaky) pro relevanci výtahů z extrakcí.
+  const terms = query
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter((t) => t.length >= 3);
+  const out: Chunk[] = [];
+  const seenDocs = new Set<string>();
+
+  const [docsRes, extrRes, assetsRes] = await Promise.all([
+    sb
+      .from("documents")
+      .select("id, title, category")
+      .eq("household_id", householdId)
+      .ilike("title", like)
+      .limit(half),
+    // Výtahy z dokumentů (souhrn) — sem se ukládá AI extrakce s reálným obsahem.
+    sb
+      .from("document_extractions")
+      .select("document_id, extracted, documents!inner(id, title, household_id)")
+      .eq("documents.household_id", householdId)
+      .eq("status", "confirmed")
+      .limit(half),
+    sb
+      .from("assets")
+      .select("id, name, brand, model, room, category")
+      .eq("household_id", householdId)
+      // pole spojíme přes OR; vzor `like` je už zbavený čárek a závorek.
+      .or(
+        `name.ilike.${like},brand.ilike.${like},model.ilike.${like},room.ilike.${like}`,
+      )
+      .limit(half),
+  ]);
+
+  for (const d of docsRes.data ?? []) {
+    if (seenDocs.has(d.id)) continue;
+    seenDocs.add(d.id);
+    const title = d.title ?? "Dokument";
+    out.push({
+      id: `doc:${d.id}`,
+      text: `Dokument „${title}" (kategorie: ${d.category}).`,
+      source: { kind: "document", id: d.id, title, href: `/dokumenty/${d.id}` },
+    });
+  }
+
+  for (const e of extrRes.data ?? []) {
+    // Vnořený vztah může přijít jako objekt nebo jednoprvkové pole — ošetříme obojí.
+    const rel = (e as { documents?: unknown }).documents;
+    const doc = (Array.isArray(rel) ? rel[0] : rel) as
+      | { id?: string; title?: string }
+      | undefined;
+    const docId = doc?.id ?? e.document_id;
+    if (!docId || seenDocs.has(docId)) continue;
+    const summary = summarizeExtraction(e.extracted);
+    if (!summary) continue;
+    // Relevance: zařaď výtah jen pokud obsahuje aspoň jedno klíčové slovo dotazu
+    // (nebo dotaz nemá žádné delší slovo). Jinak bychom do RAG cpali náhodné dokumenty.
+    if (terms.length > 0) {
+      const hay = summary.toLowerCase();
+      if (!terms.some((t) => hay.includes(t))) continue;
+    }
+    seenDocs.add(docId);
+    const title = doc?.title ?? "Dokument";
+    out.push({
+      id: `doc:${docId}`,
+      text: `Z dokumentu „${title}": ${summary}`,
+      source: { kind: "document", id: docId, title, href: `/dokumenty/${docId}` },
+    });
+  }
+
+  for (const a of assetsRes.data ?? []) {
+    const parts = [a.brand, a.model, a.room ? `místnost ${a.room}` : null]
+      .filter(Boolean)
+      .join(", ");
+    out.push({
+      id: `asset:${a.id}`,
+      text: `Položka majetku „${a.name}"${parts ? ` (${parts})` : ""}.`,
+      source: { kind: "asset", id: a.id, title: a.name, href: `/majetek/${a.id}` },
+    });
+  }
+
+  return out.slice(0, MAX_CHUNKS);
+}
+
+// Z extrakce (jsonb) sestav stručný, citovatelný text — jen pole, která dávají
+// smysl jako odpověď. Vrací null, pokud výtah nic užitečného neobsahuje.
+function summarizeExtraction(extracted: unknown): string | null {
+  if (!extracted || typeof extracted !== "object") return null;
+  const e = extracted as Record<string, unknown>;
+  const parts: string[] = [];
+  if (typeof e.summary === "string" && e.summary.trim()) parts.push(e.summary.trim());
+  if (typeof e.supplier === "string" && e.supplier.trim())
+    parts.push(`dodavatel ${e.supplier.trim()}`);
+  if (typeof e.amount === "number")
+    parts.push(`částka ${e.amount} ${typeof e.currency === "string" ? e.currency : "Kč"}`);
+  if (typeof e.warranty_until === "string" && e.warranty_until.trim())
+    parts.push(`záruka do ${e.warranty_until}`);
+  if (typeof e.inspection_no === "string" && e.inspection_no.trim())
+    parts.push(`číslo revize ${e.inspection_no}`);
+  if (typeof e.date === "string" && e.date.trim()) parts.push(`datum ${e.date}`);
+  return parts.length ? parts.join("; ") + "." : null;
+}
 
 function rowToChunk(row: EmbeddingMatch): Chunk | null {
   const text = (row.chunk_text ?? "").trim();

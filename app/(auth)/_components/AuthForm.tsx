@@ -11,6 +11,7 @@ import { Loader2, AlertCircle, MailCheck } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
+import { safeNextPath } from "./safe-path";
 
 type Mode = "login" | "signup";
 
@@ -37,7 +38,7 @@ export function AuthForm({ mode, next }: { mode: Mode; next?: string }) {
     defaultValues: { fullName: "", email: "", password: "" },
   });
 
-  const destination = next && next.startsWith("/") ? next : "/prehled";
+  const destination = safeNextPath(next);
 
   async function onSubmit(values: FormValues) {
     setServerError(null);
@@ -135,9 +136,19 @@ export function AuthForm({ mode, next }: { mode: Mode; next?: string }) {
       </div>
 
       <div>
-        <label htmlFor="password" className="mb-1.5 block text-sm font-medium text-ink">
-          Heslo
-        </label>
+        <div className="mb-1.5 flex items-center justify-between gap-2">
+          <label htmlFor="password" className="block text-sm font-medium text-ink">
+            Heslo
+          </label>
+          {!isSignup && (
+            <Link
+              href="/zapomenute-heslo"
+              className="text-xs font-medium text-navy hover:underline"
+            >
+              Zapomenuté heslo?
+            </Link>
+          )}
+        </div>
         <Input
           id="password"
           type="password"

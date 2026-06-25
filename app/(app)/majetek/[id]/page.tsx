@@ -1,9 +1,8 @@
 // Detail položky majetku — fotka (podepsaná URL), základní údaje a akce
-// "Odhadnout hodnotu" (hrubý odhad rozsahu přes estimateValue, uložený do
-// estimated_value). Dole připojené záruky a dokumenty. Vše česky.
+// "Odhadnout hodnotu" (hrubý odhad rozsahu přes /api/ai/value, uložený jako
+// orientační střed). Dole připojené záruky a dokumenty. Vše česky.
 import Link from "next/link";
-import { notFound, redirect } from "next/navigation";
-import { revalidatePath } from "next/cache";
+import { notFound } from "next/navigation";
 import {
   ArrowLeft,
   Package,
@@ -13,10 +12,9 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
-import { estimateValue } from "@/lib/ai";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
-import { Button } from "@/components/ui/Button";
+import { ValueEstimator } from "../_components/ValueEstimator";
 
 export const metadata = { title: "Položka majetku — Home Passport" };
 
@@ -70,72 +68,13 @@ function fmtConfidence(c: number | null) {
   return `${Math.round(c * 100)} %`;
 }
 
+// Nízká spolehlivost AI není „nebezpečí" ani zákonná povinnost — proto nikdy
+// červený (legal_required) tón. Jen neutrální / teplý odstín dle jistoty.
 function confidenceTone(c: number | null) {
   if (c === null) return "draft" as const;
   if (c >= 0.8) return "verified" as const;
   if (c >= 0.5) return "insurance_recommended" as const;
-  return "legal_required" as const;
-}
-
-// ---- server action: hrubý odhad hodnoty ----------------------------------
-// Odhad je NÁVRH (rozsah od–do). Ukládáme střed jako orientační hodnotu spolu
-// s confidence — nikdy ne jako pevnou cenu.
-async function estimateAssetValue(formData: FormData) {
-  "use server";
-  const assetId = String(formData.get("assetId"));
-  const sb = await createClient();
-  const {
-    data: { user },
-  } = await sb.auth.getUser();
-  if (!user) redirect("/prihlaseni");
-
-  // RLS (assets_access) gate — vidíme jen položku vlastní domácnosti.
-  const { data: asset } = await sb
-    .from("assets")
-    .select("id, name, brand, purchase_date")
-    .eq("id", assetId)
-    .maybeSingle();
-  if (!asset) return;
-
-  let ageYears: number | undefined;
-  if (asset.purchase_date) {
-    const y = Math.floor(
-      (Date.now() - new Date(asset.purchase_date).getTime()) /
-        (365.25 * 24 * 3600 * 1000),
-    );
-    if (Number.isFinite(y) && y >= 0) ageYears = y;
-  }
-
-  let est;
-  try {
-    est = await estimateValue({
-      name: asset.name,
-      brand: asset.brand ?? undefined,
-      age_years: ageYears,
-    });
-  } catch {
-    return;
-  }
-
-  const low = typeof est.low === "number" ? est.low : null;
-  const high = typeof est.high === "number" ? est.high : null;
-  const confidence = typeof est.confidence === "number" ? est.confidence : null;
-  const mid =
-    low !== null && high !== null
-      ? Math.round((low + high) / 2)
-      : (high ?? low);
-  if (mid === null) return;
-
-  await sb
-    .from("assets")
-    .update({
-      estimated_value: mid,
-      estimated_value_confidence: confidence,
-    })
-    .eq("id", assetId);
-
-  revalidatePath(`/majetek/${assetId}`);
-  revalidatePath("/majetek");
+  return "draft" as const;
 }
 
 // ---- page ----------------------------------------------------------------
@@ -280,34 +219,32 @@ export default async function MajetekDetailPage({
               </Badge>
             )}
           </div>
-          <div className="p-5">
+          <div className="space-y-4 p-5">
             {a.estimated_value != null ? (
-              <>
-                <p className="text-sm text-ink-soft">Orientační hodnota</p>
+              <div>
+                <p className="text-sm text-ink-soft">
+                  Uložená orientační hodnota
+                </p>
                 <p className="mt-1 font-display text-3xl font-semibold text-ink">
                   ~ {estimate}
                 </p>
                 <p className="mt-3 rounded-md bg-surface-2 px-3 py-2 text-xs text-muted">
                   Jde o hrubý odhad obvyklé tržní hodnoty použité věci v ČR, ne o
-                  znalecký posudek. Slouží jen pro vaši orientaci a soupis majetku.
+                  znalecký posudek. Uložen je orientačně střed odhadnutého
+                  rozsahu — slouží jen pro vaši orientaci a soupis majetku.
                 </p>
-              </>
+              </div>
             ) : (
               <p className="text-sm text-muted">
                 Hodnota zatím nebyla odhadnuta. Spusťte hrubý odhad podle názvu,
-                značky a stáří položky.
+                značky a stáří položky — výsledkem je orientační rozsah od–do.
               </p>
             )}
 
-            <form action={estimateAssetValue} className="mt-4">
-              <input type="hidden" name="assetId" value={a.id} />
-              <Button type="submit" variant="honey">
-                <Wand2 size={15} />
-                {a.estimated_value != null
-                  ? "Přepočítat odhad"
-                  : "Odhadnout hodnotu"}
-              </Button>
-            </form>
+            <ValueEstimator
+              assetId={a.id}
+              hasEstimate={a.estimated_value != null}
+            />
           </div>
         </Card>
       </div>

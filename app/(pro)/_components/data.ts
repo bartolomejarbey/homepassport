@@ -28,13 +28,13 @@ export async function getMyOrgs(): Promise<Org[]> {
     .filter((o): o is Org => o !== null);
 }
 
-/** Property passports created by / linked to the given org. */
+/** Property passports created by / linked to the given org (newest first). */
 export async function getOrgProperties(orgId: string): Promise<ProProperty[]> {
   const sb = await createClient();
   const { data } = await sb
     .from("property_org_links")
     .select(
-      "properties(id, type, title, street, city, postal_code, status)",
+      "properties(id, type, title, street, city, postal_code, status, created_at)",
     )
     .eq("organization_id", orgId);
 
@@ -47,5 +47,8 @@ export async function getOrgProperties(orgId: string): Promise<ProProperty[]> {
       if (!p || seen.has(p.id)) return false;
       seen.add(p.id);
       return true;
-    });
+    })
+    // Ordering on an embedded resource isn't reliable through the join table, so
+    // we sort here — the dashboard's "Poslední pasy" (slice 0..5) depends on it.
+    .sort((a, b) => (b.created_at ?? "").localeCompare(a.created_at ?? ""));
 }

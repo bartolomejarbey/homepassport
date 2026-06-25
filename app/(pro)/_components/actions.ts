@@ -5,7 +5,6 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { redirect } from "next/navigation";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -39,7 +38,8 @@ export async function createOrganization(input: unknown): Promise<CreateOrgResul
     return { ok: false, error: "Firmu se nepodařilo založit. Zkuste to prosím znovu." };
   }
 
-  await sb.from("audit_events").insert({
+  // audit_events má jen SELECT policy (RLS); zápis proto vede přes service role.
+  await createAdminClient().from("audit_events").insert({
     actor_id: user.id,
     organization_id: orgId as string,
     action: "organization.created",
@@ -141,12 +141,4 @@ export async function createOrgProperty(input: unknown): Promise<CreatePropertyR
   revalidatePath("/pro");
   revalidatePath("/pro/nemovitosti");
   return { ok: true, id: property.id };
-}
-
-// Convenience: create a passport then bounce straight to its document upload so
-// the developer can start dropping files immediately (AI does the sorting).
-export async function createOrgPropertyAndUpload(input: unknown) {
-  const res = await createOrgProperty(input);
-  if (res.ok) redirect(`/dokumenty?property=${res.id}`);
-  return res;
 }

@@ -7,6 +7,7 @@ export type ProProperty = {
   city: string | null;
   postal_code: string | null;
   status: string;
+  created_at?: string | null;
 };
 
 export const TYPE_LABELS: Record<string, string> = {

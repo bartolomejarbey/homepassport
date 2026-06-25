@@ -2,9 +2,9 @@
 // bounce to /pro to found one first.
 import { redirect } from "next/navigation";
 import { EmptyState } from "@/components/ui/EmptyState";
-import { CreatePropertyDialog } from "../_components/CreatePropertyDialog";
-import { PropertyList } from "../_components/PropertyList";
-import { getMyOrgs, getOrgProperties } from "../_components/data";
+import { CreatePropertyDialog } from "../../../_components/CreatePropertyDialog";
+import { PropertyList } from "../../../_components/PropertyList";
+import { getMyOrgs, getOrgProperties } from "../../../_components/data";
 
 export const metadata = { title: "Nemovitosti — Pro firmy" };
 

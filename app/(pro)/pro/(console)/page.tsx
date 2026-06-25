@@ -4,10 +4,10 @@
 import Link from "next/link";
 import { ArrowRight, FolderKanban, FileStack, Send, Sparkles } from "lucide-react";
 import { EmptyState } from "@/components/ui/EmptyState";
-import { CreateOrgForm } from "./_components/CreateOrgForm";
-import { CreatePropertyDialog } from "./_components/CreatePropertyDialog";
-import { PropertyList } from "./_components/PropertyList";
-import { getMyOrgs, getOrgProperties } from "./_components/data";
+import { CreateOrgForm } from "../../_components/CreateOrgForm";
+import { CreatePropertyDialog } from "../../_components/CreatePropertyDialog";
+import { PropertyList } from "../../_components/PropertyList";
+import { getMyOrgs, getOrgProperties } from "../../_components/data";
 
 export const metadata = { title: "Pro firmy — Home Passport" };
 

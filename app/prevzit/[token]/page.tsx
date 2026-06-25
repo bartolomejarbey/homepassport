@@ -14,9 +14,14 @@ import {
   AlertCircle,
   FileText,
   Home,
+  CalendarClock,
+  ExternalLink,
+  ShieldQuestion,
+  BadgeCheck,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { DownloadAll } from "./_components/DownloadAll";
 
 export const metadata = { title: "Převzetí pasu nemovitosti — Home Passport" };
 
@@ -39,6 +44,36 @@ const KIND_LABELS: Record<string, string> = {
   manuals: "Návody",
   equipment: "Vybavení",
 };
+
+const DOC_CATEGORY_LABELS: Record<string, string> = {
+  contract: "Smlouva",
+  invoice: "Faktura",
+  penb: "PENB",
+  inspection: "Revizní zpráva",
+  manual: "Návod",
+  warranty: "Záruka",
+  plan: "Plán",
+  insurance: "Pojištění",
+  other: "Dokument",
+};
+
+function fmtDate(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const t = Date.parse(value);
+  if (Number.isNaN(t)) return null;
+  return new Date(t).toLocaleDateString("cs-CZ", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
+}
+
+// Bezpečný název souboru pro hlavičku Content-Disposition v podepsané URL.
+function safeFileName(title: string | null, category: string, id: string): string {
+  const base = (title && title.trim()) || DOC_CATEGORY_LABELS[category] || "dokument";
+  const cleaned = base.replace(/[^\w.\-áčďéěíňóřšťúůýžÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ ]+/g, "").trim();
+  return cleaned || `dokument-${id.slice(0, 8)}`;
+}
 
 function propertyName(p: {
   title: string | null;
@@ -155,7 +190,8 @@ export default async function PrevzitPage({
 
   // status === 'pending' a neexpirováno: načti PŘENOSNOU vrstvu nemovitosti.
   // Vědomě NEnačítáme household, property_owners, osobní doklady ani kontakty.
-  const [{ data: property }, { data: context }, { data: sections }, { count: docCount }] =
+  // Dokumenty bereme JEN s transferable=true — pouze ty s nemovitostí přecházejí.
+  const [{ data: property }, { data: context }, { data: sections }, { data: docsRaw }] =
     await Promise.all([
       admin
         .from("properties")
@@ -174,12 +210,17 @@ export default async function PrevzitPage({
         .select("id, kind, title")
         .eq("property_id", invitation.property_id)
         .order("created_at", { ascending: true }),
-      // Počet přenosných dokumentů — pouze ty, které putují s nemovitostí.
+      // Přenosné dokumenty — pouze ty, které putují s nemovitostí. Joinujeme
+      // POTVRZENÉ extrakce (status='confirmed') kvůli klíčovým datům: nikdy
+      // nezobrazujeme nepotvrzené AI návrhy (poctivost — žádná smyšlená data).
       admin
         .from("documents")
-        .select("id", { count: "exact", head: true })
+        .select(
+          "id, title, category, file_path, created_at, document_extractions(extracted, status)",
+        )
         .eq("property_id", invitation.property_id)
-        .eq("transferable", true),
+        .eq("transferable", true)
+        .order("created_at", { ascending: false }),
     ]);
 
   if (!property) {
@@ -214,7 +255,143 @@ export default async function PrevzitPage({
   ].filter(Boolean) as string[];
 
   const sectionRows = sections ?? [];
-  const transferableDocs = docCount ?? 0;
+
+  // --- Hodnota v první minutě: top dokumenty + klíčová data + stáhnout vše -----
+  type ExtractionRow = {
+    extracted: {
+      warranty_until?: string;
+      date?: string;
+      inspection_no?: string;
+      summary?: string;
+    } | null;
+    status: "draft" | "confirmed" | "rejected";
+  };
+  type DocRow = {
+    id: string;
+    title: string | null;
+    category: string;
+    file_path: string;
+    created_at: string;
+    document_extractions: ExtractionRow[] | null;
+  };
+  const docs = (docsRaw as DocRow[] | null) ?? [];
+  const transferableDocs = docs.length;
+
+  // Podepsané URL (TTL 1 h) generujeme server-side adminem — nikdy nevystavujeme
+  // syrovou cestu v privátním úložišti. Dvě sady: náhled (otevřít) a stažení
+  // (Content-Disposition s názvem souboru). Bez podpisu se odkaz prostě nezobrazí.
+  const filePaths = docs.map((d) => d.file_path);
+  const previewByPath = new Map<string, string>();
+  const downloadByPath = new Map<string, string>();
+  if (filePaths.length > 0) {
+    // Náhled: jeden batch podpis (otevřít v okně).
+    const previewsPromise = admin.storage
+      .from("documents")
+      .createSignedUrls(filePaths, 3600);
+    // Stažení: per-soubor podpis kvůli názvu (Content-Disposition).
+    const downloadsPromise = Promise.all(
+      docs.map((d) =>
+        admin.storage
+          .from("documents")
+          .createSignedUrl(d.file_path, 3600, {
+            download: safeFileName(d.title, d.category, d.id),
+          }),
+      ),
+    );
+    const [{ data: previews }, downloads] = await Promise.all([
+      previewsPromise,
+      downloadsPromise,
+    ]);
+    for (const row of previews ?? []) {
+      if (row?.path && row.signedUrl) previewByPath.set(row.path, row.signedUrl);
+    }
+    docs.forEach((d, i) => {
+      const url = downloads[i]?.data?.signedUrl;
+      if (url) downloadByPath.set(d.file_path, url);
+    });
+  }
+
+  // Klíčová data: jen z POTVRZENÝCH extrakcí přenosných dokumentů. Datum na
+  // revizní zprávě je datum PROVEDENÍ revize (ne termín další) — popisujeme to
+  // poctivě. Žádné AI návrhy, žádná smyšlená "platnost do".
+  type KeyDate = {
+    docId: string;
+    label: string;
+    dateLabel: string;
+    sortKey: number;
+  };
+  const keyDates: KeyDate[] = [];
+  for (const d of docs) {
+    const confirmed = (d.document_extractions ?? []).find(
+      (e) => e.status === "confirmed" && e.extracted,
+    );
+    if (!confirmed?.extracted) continue;
+    const ex = confirmed.extracted;
+    const docLabel = d.title?.trim() || DOC_CATEGORY_LABELS[d.category] || "Dokument";
+    if (ex.warranty_until) {
+      const f = fmtDate(ex.warranty_until);
+      if (f)
+        keyDates.push({
+          docId: d.id,
+          label: `Konec záruky — ${docLabel}`,
+          dateLabel: f,
+          sortKey: Date.parse(ex.warranty_until),
+        });
+    }
+    if (d.category === "penb" && ex.date) {
+      const f = fmtDate(ex.date);
+      if (f)
+        keyDates.push({
+          docId: d.id,
+          label: `PENB vystaven — ${docLabel}`,
+          dateLabel: f,
+          sortKey: Date.parse(ex.date),
+        });
+    }
+    if (d.category === "inspection" && ex.date) {
+      const f = fmtDate(ex.date);
+      if (f)
+        keyDates.push({
+          docId: d.id,
+          label: `Revize provedena — ${docLabel}`,
+          dateLabel: f,
+          sortKey: Date.parse(ex.date),
+        });
+    }
+  }
+  keyDates.sort((a, b) => a.sortKey - b.sortKey);
+
+  // Top dokumenty pro úvodní hodnotu — pár nejdůležitějších, s náhledem i stažením.
+  const CATEGORY_PRIORITY: Record<string, number> = {
+    penb: 0,
+    inspection: 1,
+    warranty: 2,
+    insurance: 3,
+    plan: 4,
+    manual: 5,
+    contract: 6,
+    invoice: 7,
+    other: 8,
+  };
+  const topDocs = [...docs]
+    .sort(
+      (a, b) =>
+        (CATEGORY_PRIORITY[a.category] ?? 9) - (CATEGORY_PRIORITY[b.category] ?? 9),
+    )
+    .slice(0, 6)
+    .map((d) => ({
+      id: d.id,
+      title: d.title?.trim() || DOC_CATEGORY_LABELS[d.category] || "Dokument",
+      categoryLabel: DOC_CATEGORY_LABELS[d.category] ?? "Dokument",
+      dateLabel: fmtDate(d.created_at),
+      previewUrl: previewByPath.get(d.file_path) ?? null,
+      downloadUrl: downloadByPath.get(d.file_path) ?? null,
+    }));
+
+  // Pro "Stáhnout vše" sbíráme jen úspěšně podepsané download URL.
+  const downloadAllUrls = docs
+    .map((d) => downloadByPath.get(d.file_path))
+    .filter((u): u is string => Boolean(u));
 
   // Pro nepřihlášené neseme token přes ?next zpět na tuto stránku. Pod typovanými
   // routami předáváme cíl jako UrlObject (pathname + query), ne jako řetězec.
@@ -343,6 +520,116 @@ export default async function PrevzitPage({
             </p>
           </div>
         </div>
+
+        {/* Hodnota v první minutě: top dokumenty, klíčová data, stáhnout vše */}
+        {(topDocs.length > 0 || keyDates.length > 0) && (
+          <div className="card p-5">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="font-display text-base font-semibold text-ink">
+                  Hodnota hned v první minutě
+                </p>
+                <p className="mt-0.5 text-sm text-ink-soft">
+                  Nejdůležitější dokumenty a termíny, které k nemovitosti patří.
+                </p>
+              </div>
+              {downloadAllUrls.length > 1 && (
+                <DownloadAll urls={downloadAllUrls} />
+              )}
+            </div>
+
+            {keyDates.length > 0 && (
+              <div className="mt-4 border-t border-line pt-4">
+                <p className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted">
+                  <CalendarClock size={13} /> Klíčová data
+                </p>
+                <ul className="mt-2 space-y-1.5">
+                  {keyDates.map((k) => (
+                    <li
+                      key={`${k.docId}-${k.label}`}
+                      className="flex items-center justify-between gap-3 rounded-md bg-surface-2 px-3 py-2 text-sm"
+                    >
+                      <span className="min-w-0 truncate text-ink-soft">{k.label}</span>
+                      <span className="shrink-0 font-medium text-ink">
+                        {k.dateLabel}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-2 flex items-start gap-1.5 text-xs text-muted">
+                  <BadgeCheck size={13} className="mt-0.5 shrink-0 text-teal" />
+                  Data pocházejí z potvrzených dokumentů. Datum revize je datum
+                  jejího provedení — termín další revize plyne z kontextu nemovitosti.
+                </p>
+              </div>
+            )}
+
+            {topDocs.length > 0 && (
+              <div className="mt-4 border-t border-line pt-4">
+                <p className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted">
+                  <FileText size={13} /> Klíčové dokumenty
+                </p>
+                <ul className="mt-2 divide-y divide-line">
+                  {topDocs.map((d) => (
+                    <li
+                      key={d.id}
+                      className="flex items-center gap-3 py-2.5 first:pt-0 last:pb-0"
+                    >
+                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-surface-2">
+                        <FileText size={16} className="text-honey" />
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-medium text-ink">
+                          {d.title}
+                        </p>
+                        <p className="mt-0.5 text-xs text-muted">
+                          {d.categoryLabel}
+                          {d.dateLabel ? ` · ${d.dateLabel}` : ""}
+                        </p>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-3">
+                        {d.previewUrl && (
+                          <a
+                            href={d.previewUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 text-xs font-medium text-navy hover:underline"
+                          >
+                            <ExternalLink size={13} /> Náhled
+                          </a>
+                        )}
+                        {d.downloadUrl && (
+                          <a
+                            href={d.downloadUrl}
+                            className="inline-flex items-center gap-1 text-xs font-medium text-ink-soft hover:text-ink"
+                          >
+                            Stáhnout
+                          </a>
+                        )}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+                {transferableDocs > topDocs.length && (
+                  <p className="mt-2 text-xs text-muted">
+                    a další {transferableDocs - topDocs.length}{" "}
+                    {transferableDocs - topDocs.length === 1
+                      ? "dokument"
+                      : transferableDocs - topDocs.length < 5
+                        ? "dokumenty"
+                        : "dokumentů"}{" "}
+                    se přenese po převzetí.
+                  </p>
+                )}
+                <p className="mt-2 flex items-start gap-1.5 text-xs text-muted">
+                  <ShieldQuestion size={13} className="mt-0.5 shrink-0 text-ink-soft" />
+                  Zobrazené odkazy jsou dočasné (platí 1 hodinu) a vedou jen na
+                  dokumenty výslovně označené jako přenosné.
+                </p>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Akce: přihlášený převezme, nepřihlášený se registruje */}
         {user ? (

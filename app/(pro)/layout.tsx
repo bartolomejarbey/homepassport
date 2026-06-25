@@ -1,8 +1,9 @@
-// B2B (pro) shell — branded console for developers / stavební firmy.
-// Server-side auth gate + honey-accented header. Distinct from the consumer app
-// shell: this is the builder-facing surface, so the accent is honey, not navy.
+// B2B (pro) shell — branded, honey-accented header shared by the console AND the
+// public pilot-request page (/pro/poptavka). The auth GATE lives one level down in
+// pro/(console)/layout.tsx, so prospective firms can reach the sales page without
+// an account. Distinct from the consumer app shell: builder-facing, so the accent
+// is honey, not navy.
 import Link from "next/link";
-import { redirect } from "next/navigation";
 import { Building2, LayoutDashboard, FolderKanban, ArrowLeft, LogOut } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 
@@ -17,8 +18,6 @@ export default async function ProLayout({
   const {
     data: { user },
   } = await sb.auth.getUser();
-
-  if (!user) redirect("/prihlaseni?next=/pro");
 
   return (
     <div className="min-h-screen bg-paper">
@@ -38,41 +37,60 @@ export default async function ProLayout({
             </span>
           </Link>
 
-          <nav className="hidden items-center gap-1 sm:flex" aria-label="Konzole">
-            <Link
-              href="/pro"
-              className="flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium text-white/80 transition-colors hover:bg-white/10 hover:text-white"
-            >
-              <LayoutDashboard size={16} className="text-honey" />
-              Přehled
-            </Link>
-            <Link
-              href="/pro/nemovitosti"
-              className="flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium text-white/80 transition-colors hover:bg-white/10 hover:text-white"
-            >
-              <FolderKanban size={16} className="text-honey" />
-              Nemovitosti
-            </Link>
-          </nav>
+          {user ? (
+            <>
+              <nav className="hidden items-center gap-1 sm:flex" aria-label="Konzole">
+                <Link
+                  href="/pro"
+                  className="flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium text-white/80 transition-colors hover:bg-white/10 hover:text-white"
+                >
+                  <LayoutDashboard size={16} className="text-honey" />
+                  Přehled
+                </Link>
+                <Link
+                  href="/pro/nemovitosti"
+                  className="flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium text-white/80 transition-colors hover:bg-white/10 hover:text-white"
+                >
+                  <FolderKanban size={16} className="text-honey" />
+                  Nemovitosti
+                </Link>
+              </nav>
 
-          <div className="flex items-center gap-1">
-            <Link
-              href="/prehled"
-              className="flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium text-white/70 transition-colors hover:bg-white/10 hover:text-white"
-            >
-              <ArrowLeft size={15} className="text-honey" />
-              <span className="hidden sm:inline">Moje domácnost</span>
-            </Link>
-            <form action="/auth/signout" method="post">
-              <button
-                type="submit"
-                className="flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium text-white/70 transition-colors hover:bg-white/10 hover:text-white"
-                aria-label="Odhlásit se"
+              <div className="flex items-center gap-1">
+                <Link
+                  href="/prehled"
+                  className="flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium text-white/70 transition-colors hover:bg-white/10 hover:text-white"
+                >
+                  <ArrowLeft size={15} className="text-honey" />
+                  <span className="hidden sm:inline">Moje domácnost</span>
+                </Link>
+                <form action="/auth/signout" method="post">
+                  <button
+                    type="submit"
+                    className="flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium text-white/70 transition-colors hover:bg-white/10 hover:text-white"
+                    aria-label="Odhlásit se"
+                  >
+                    <LogOut size={16} className="text-honey" />
+                  </button>
+                </form>
+              </div>
+            </>
+          ) : (
+            <div className="flex items-center gap-2">
+              <Link
+                href="/prihlaseni?next=/pro"
+                className="rounded-md px-3 py-2 text-sm font-medium text-white/80 transition-colors hover:bg-white/10 hover:text-white"
               >
-                <LogOut size={16} className="text-honey" />
-              </button>
-            </form>
-          </div>
+                Přihlásit
+              </Link>
+              <Link
+                href="/registrace"
+                className="rounded-md bg-honey px-3 py-2 text-sm font-semibold text-navy-900 transition-colors hover:bg-honey-100"
+              >
+                Vyzkoušet
+              </Link>
+            </div>
+          )}
         </div>
       </header>
 

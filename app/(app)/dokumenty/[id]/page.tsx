@@ -4,12 +4,12 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { ArrowLeft, ExternalLink, Sparkles, CheckCircle2, XCircle } from "lucide-react";
+import { ArrowLeft, ExternalLink, Sparkles, CheckCircle2, XCircle, RefreshCw } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
-import type { DocExtraction } from "@/lib/ai";
+import { extractDocument, type DocExtraction } from "@/lib/ai";
 
 export const metadata = { title: "Dokument — Home Passport" };
 
@@ -57,6 +57,99 @@ async function rejectExtraction(formData: FormData) {
 async function confirmExtraction(formData: FormData) {
   "use server";
   const extractionId = String(formData.get("extractionId"));
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) redirect("/prihlaseni");
+
+  // Zdrojem pravdy je extrakce sama (její document_id), ne hidden input z formuláře —
+  // jinak by se připomínka mohla navázat na cizí dokument. RLS navíc vrátí jen
+  // extrakci dokumentu, ke kterému má uživatel přístup.
+  const { data: ext } = await sb
+    .from("document_extractions")
+    .select("id, extracted, document_id, status")
+    .eq("id", extractionId)
+    .maybeSingle();
+  if (!ext) return;
+
+  const documentId = ext.document_id as string;
+
+  const { data: doc } = await sb
+    .from("documents")
+    .select("id, household_id, property_id, category, title")
+    .eq("id", documentId)
+    .maybeSingle();
+  if (!doc) return;
+
+  // Idempotence: pokud už je potvrzená, nic znovu nezakládáme (ochrana proti
+  // dvojímu odeslání i opakovanému potvrzení).
+  if (ext.status === "confirmed") {
+    revalidatePath(`/dokumenty/${documentId}`);
+    return;
+  }
+
+  await sb
+    .from("document_extractions")
+    .update({ status: "confirmed", reviewed_by: user.id })
+    .eq("id", extractionId);
+
+  // Volitelně založit připomínku z potvrzených dat — bez duplicit. Záruka i revize
+  // jsou pro vlastníka jen "doporučené"; nikdy netvrdíme, že to ukládá zákon.
+  // Deduplikace dle document_id + type: potvrzení dalšího návrhu téhož dokumentu
+  // (např. po opakované extrakci) už druhou připomínku nevytvoří.
+  const data = (ext.extracted ?? {}) as DocExtraction;
+
+  async function ensureReminder(
+    type: "warranty" | "inspection",
+    title: string,
+    dueDate: string | null,
+  ) {
+    const { data: existing } = await sb
+      .from("reminders")
+      .select("id")
+      .eq("document_id", doc!.id)
+      .eq("type", type)
+      .limit(1)
+      .maybeSingle();
+    if (existing) return; // už existuje — neduplikovat
+    await sb.from("reminders").insert({
+      household_id: doc!.household_id,
+      property_id: doc!.property_id,
+      document_id: doc!.id,
+      type,
+      title,
+      due_date: dueDate,
+      wording_type: "recommended",
+      status: "open",
+    });
+  }
+
+  if (data.warranty_until && isFutureIsoDate(data.warranty_until)) {
+    await ensureReminder(
+      "warranty",
+      `Konec záruky: ${doc.title ?? "dokument"}`,
+      data.warranty_until,
+    );
+  } else if (doc.category === "inspection") {
+    // POCTIVOST: datum na revizní zprávě je datum PROVEDENÍ revize, ne termín
+    // další revize. Interval (a tím i další termín) plyne z kontextu nemovitosti,
+    // ne z dokumentu — proto due_date necháváme prázdné a uživatele nasměrujeme
+    // na výpočet revizí. Žádné smyšlené „další revize do …".
+    await ensureReminder(
+      "inspection",
+      `Zkontrolovat termín další revize: ${doc.title ?? "dokument"}`,
+      null,
+    );
+  }
+
+  revalidatePath(`/dokumenty/${documentId}`);
+  revalidatePath("/pripominky");
+}
+
+// Re-spuštění AI extrakce z detailu (když po nahrání selhala nebo byl návrh odmítnut).
+async function runExtraction(formData: FormData) {
+  "use server";
   const documentId = String(formData.get("documentId"));
   const sb = await createClient();
   const {
@@ -64,55 +157,53 @@ async function confirmExtraction(formData: FormData) {
   } = await sb.auth.getUser();
   if (!user) redirect("/prihlaseni");
 
-  const { data: ext } = await sb
-    .from("document_extractions")
-    .select("id, extracted, document_id")
-    .eq("id", extractionId)
-    .maybeSingle();
-
   const { data: doc } = await sb
     .from("documents")
-    .select("id, household_id, property_id, category, title")
+    .select("id, file_path, mime")
     .eq("id", documentId)
     .maybeSingle();
+  if (!doc) return;
 
-  if (!ext || !doc) return;
+  const { data: blob } = await sb.storage.from("documents").download(doc.file_path);
+  if (!blob) return;
 
-  await sb
-    .from("document_extractions")
-    .update({ status: "confirmed", reviewed_by: user.id })
-    .eq("id", extractionId);
+  const mime = doc.mime || blob.type || "application/octet-stream";
+  const base64 = Buffer.from(await blob.arrayBuffer()).toString("base64");
+  const dataUrl = `data:${mime};base64,${base64}`;
 
-  // Volitelně založit připomínku z potvrzených dat. Záruka i revize jsou
-  // pro vlastníka jen "doporučené" — nikdy netvrdíme, že to ukládá zákon.
-  const data = (ext.extracted ?? {}) as DocExtraction;
-  if (data.warranty_until) {
-    await sb.from("reminders").insert({
-      household_id: doc.household_id,
-      property_id: doc.property_id,
-      document_id: doc.id,
-      type: "warranty",
-      title: `Konec záruky: ${doc.title ?? "dokument"}`,
-      due_date: data.warranty_until,
-      wording_type: "recommended",
-    });
-  } else if (doc.category === "inspection" && data.date) {
-    await sb.from("reminders").insert({
-      household_id: doc.household_id,
-      property_id: doc.property_id,
-      document_id: doc.id,
-      type: "inspection",
-      title: `Další revize: ${doc.title ?? "dokument"}`,
-      due_date: data.date,
-      wording_type: "recommended",
-    });
+  let extracted: DocExtraction;
+  try {
+    extracted = await extractDocument(dataUrl);
+  } catch {
+    return; // ticho: stránka se znovu vykreslí beze změny, uživatel může zkusit znovu
   }
 
+  const confidence =
+    typeof extracted.confidence === "number" ? extracted.confidence : null;
+
+  await sb.from("document_extractions").insert({
+    document_id: doc.id,
+    extracted,
+    confidence,
+    provider: "openai",
+    model: process.env.AI_MODEL ?? "gpt-5.5",
+    status: "draft",
+  });
+
   revalidatePath(`/dokumenty/${documentId}`);
-  revalidatePath("/pripominky");
 }
 
 // ---- helpers --------------------------------------------------------------
+
+// Připomínku zakládáme jen pro datum, které dává smysl (dnes nebo v budoucnu).
+// Minulé „záruka do" je už prošlá — nemá smysl na ni upozorňovat termínem.
+function isFutureIsoDate(value: string): boolean {
+  const t = Date.parse(value);
+  if (Number.isNaN(t)) return false;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return t >= today.getTime();
+}
 
 function fmtConfidence(c: number | null) {
   if (c === null || Number.isNaN(c)) return "neuvedeno";
@@ -253,9 +344,18 @@ export default async function DokumentDetailPage({
 
           <div className="p-5">
             {!latest ? (
-              <p className="text-sm text-muted">
-                Pro tento dokument zatím není žádný návrh. Extrakce se spouští po nahrání.
-              </p>
+              <div className="space-y-3">
+                <p className="text-sm text-muted">
+                  Pro tento dokument zatím není žádný návrh. Extrakce se obvykle spustí
+                  hned po nahrání — pokud se nepovedla, spusťte ji ručně.
+                </p>
+                <form action={runExtraction}>
+                  <input type="hidden" name="documentId" value={doc.id} />
+                  <Button type="submit" variant="honey">
+                    <Sparkles size={15} /> Navrhnout data z dokumentu
+                  </Button>
+                </form>
+              </div>
             ) : (
               <>
                 <div className="mb-4 flex items-center gap-2 text-sm">
@@ -280,15 +380,15 @@ export default async function DokumentDetailPage({
 
                 <p className="mt-4 rounded-md bg-surface-2 px-3 py-2 text-xs text-muted">
                   Toto je automatický návrh. Zkontrolujte hodnoty a potvrďte je, nebo
-                  návrh odmítněte. Potvrzením se založí připomínka, pokud dokument
-                  obsahuje datum konce záruky nebo revize.
+                  návrh odmítněte. Pokud dokument obsahuje budoucí konec záruky, potvrzením
+                  se k němu založí připomínka. U revizní zprávy termín další revize plyne
+                  z kontextu nemovitosti — spočítáte ho v sekci Připomínky.
                 </p>
 
                 {latest.status === "draft" && (
                   <div className="mt-4 flex flex-wrap gap-2">
                     <form action={confirmExtraction}>
                       <input type="hidden" name="extractionId" value={latest.id} />
-                      <input type="hidden" name="documentId" value={doc.id} />
                       <Button type="submit" variant="primary">
                         <CheckCircle2 size={15} /> Potvrdit
                       </Button>
@@ -298,6 +398,20 @@ export default async function DokumentDetailPage({
                       <input type="hidden" name="documentId" value={doc.id} />
                       <Button type="submit" variant="ghost">
                         <XCircle size={15} /> Odmítnout
+                      </Button>
+                    </form>
+                  </div>
+                )}
+
+                {latest.status === "rejected" && (
+                  <div className="mt-4">
+                    <p className="mb-2 text-sm text-muted">
+                      Tento návrh jste odmítli. Můžete nechat vytvořit nový.
+                    </p>
+                    <form action={runExtraction}>
+                      <input type="hidden" name="documentId" value={doc.id} />
+                      <Button type="submit" variant="ghost">
+                        <RefreshCw size={15} /> Navrhnout znovu
                       </Button>
                     </form>
                   </div>

@@ -60,6 +60,16 @@ export async function POST(request: Request) {
 
   const ctx = ctxRow as PropertyContext;
 
+  // Typ nemovitosti (house/apartment/…) potřebujeme k výběru správného pravidla.
+  // Pravidla revizí jsou seedovaná zvlášť pro 'house' i 'apartment', takže bez
+  // filtru na typ by stejný systém (např. komín) vygeneroval dvě připomínky.
+  const { data: propRow } = await sb
+    .from("properties")
+    .select("type")
+    .eq("id", parsed.propertyId)
+    .maybeSingle();
+  const propertyType = (propRow?.type as string | null) ?? null;
+
   // Vlastnickou domácnost potřebujeme, aby reminders měly household scope
   // (RLS reminders_access akceptuje household i property; ukládáme oba).
   const { data: ownerLink } = await sb
@@ -71,12 +81,20 @@ export async function POST(request: Request) {
   const householdId = ownerLink?.household_id ?? null;
 
   // Referenční data: revize pravidla (RLS rules_read — čitelná všem přihlášeným).
-  const { data: rulesData, error: rulesErr } = await sb
+  // Vybíráme jen pravidla pro daný typ nemovitosti nebo univerzální (property_type
+  // NULL) — tím se vyhneme duplicitám napříč typy (house vs apartment).
+  let rulesQuery = sb
     .from("revision_rules")
     .select(
       "id, country, property_type, usage_context, system_type, interval_months, interval_note, wording_type, legal_basis, message",
     )
     .eq("country", "CZ");
+  if (propertyType) {
+    rulesQuery = rulesQuery.or(
+      `property_type.eq.${propertyType},property_type.is.null`,
+    );
+  }
+  const { data: rulesData, error: rulesErr } = await rulesQuery;
 
   if (rulesErr) {
     return NextResponse.json({ error: "Pravidla revizí se nepodařilo načíst" }, { status: 500 });
@@ -84,7 +102,24 @@ export async function POST(request: Request) {
   const rules = (rulesData as RevisionRule[] | null) ?? [];
 
   // Čistá funkce: vybere jen pravidla pro aktivní způsob užívání a přítomné systémy.
-  const drafts = buildReminderDrafts(ctx, rules);
+  // Pojistka proti duplicitám: kdyby pro jeden systém existovalo víc pravidel
+  // (typové + univerzální), necháme jen jedno — s přednostní zákonnou povinností.
+  const wordingPriority: Record<string, number> = {
+    legal_required: 0,
+    insurance_recommended: 1,
+    recommended: 2,
+  };
+  const bySystem = new Map<string, ReturnType<typeof buildReminderDrafts>[number]>();
+  for (const d of buildReminderDrafts(ctx, rules)) {
+    const prev = bySystem.get(d.system_type);
+    if (
+      !prev ||
+      (wordingPriority[d.wording_type] ?? 9) < (wordingPriority[prev.wording_type] ?? 9)
+    ) {
+      bySystem.set(d.system_type, d);
+    }
+  }
+  const drafts = [...bySystem.values()];
 
   // Existující připomínky této nemovitosti — deduplikace dle title + legal_basis.
   const { data: existingData } = await sb

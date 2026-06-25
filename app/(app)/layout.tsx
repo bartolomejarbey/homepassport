@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { KeyRound, LogOut } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 import { Sidebar } from "./_components/Sidebar";
+import { MobileNav } from "./_components/MobileNav";
 
 export default async function AppLayout({
   children,
@@ -20,15 +21,18 @@ export default async function AppLayout({
   return (
     <div className="min-h-screen bg-paper">
       <header className="sticky top-0 z-20 border-b border-line bg-surface/90 backdrop-blur">
-        <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6">
-          <Link href="/prehled" className="flex items-center gap-2.5">
+        <div className="mx-auto flex h-16 max-w-7xl items-center justify-between gap-2 px-4 sm:px-6">
+          <div className="flex items-center gap-2">
+            <MobileNav />
+            <Link href="/prehled" className="flex items-center gap-2.5">
             <span className="flex h-9 w-9 items-center justify-center rounded-md bg-navy">
               <KeyRound size={18} className="text-honey" />
             </span>
             <span className="font-display text-lg font-semibold tracking-tight text-ink">
               Home Passport
             </span>
-          </Link>
+            </Link>
+          </div>
 
           <form action="/auth/signout" method="post">
             <button

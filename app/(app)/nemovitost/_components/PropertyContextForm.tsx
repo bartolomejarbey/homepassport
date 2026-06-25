@@ -2,12 +2,14 @@
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   Loader2,
   AlertCircle,
   CheckCircle2,
   Info,
+  ArrowRight,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
@@ -47,20 +49,38 @@ const FUEL_OPTIONS: { key: FuelKey; label: string }[] = [
 ];
 
 type SystemKey = "has_chimney" | "has_gas" | "has_electrical" | "has_lps" | "has_pv";
-const SYSTEMS: { key: SystemKey; label: string; hint: string }[] = [
+type PreviewTone = "legal_required" | "recommended" | "insurance_recommended";
+const SYSTEMS: { key: SystemKey; label: string; shortLabel: string; hint: string }[] = [
   {
     key: "has_chimney",
     label: "Komín / spalinová cesta",
+    shortLabel: "Komín",
     hint: "Krb, kamna, kotel na tuhá paliva nebo plyn s odvodem spalin.",
   },
-  { key: "has_gas", label: "Plynová instalace", hint: "Plynový kotel, sporák, přípojka." },
+  {
+    key: "has_gas",
+    label: "Plynová instalace",
+    shortLabel: "Plyn",
+    hint: "Plynový kotel, sporák, přípojka.",
+  },
   {
     key: "has_electrical",
     label: "Elektroinstalace",
+    shortLabel: "Elektro",
     hint: "Domovní rozvody elektřiny.",
   },
-  { key: "has_lps", label: "Hromosvod (LPS)", hint: "Systém ochrany před bleskem." },
-  { key: "has_pv", label: "Fotovoltaika", hint: "Solární panely / FVE." },
+  {
+    key: "has_lps",
+    label: "Hromosvod (LPS)",
+    shortLabel: "Hromosvod",
+    hint: "Systém ochrany před bleskem.",
+  },
+  {
+    key: "has_pv",
+    label: "Fotovoltaika",
+    shortLabel: "Fotovoltaika",
+    hint: "Solární panely / FVE.",
+  },
 ];
 
 function usageFromCtx(ctx: PropertyContext): UsageKey {
@@ -69,6 +89,27 @@ function usageFromCtx(ctx: PropertyContext): UsageKey {
   if (ctx.rental) return "rental";
   return "owner_occupied";
 }
+
+// Honesty matrix — MUST mirror the seeded revision_rules exactly, otherwise the
+// badge tone here would contradict the wording_type of the reminder the engine
+// actually creates. A missing cell means there is no rule for that combination,
+// so the engine generates nothing and we must not promise a reminder.
+// Source of truth: supabase/seed.sql (CZ rules).
+const RULE_MATRIX: Record<SystemKey, Partial<Record<UsageKey, PreviewTone>>> = {
+  has_chimney: { owner_occupied: "legal_required" },
+  has_gas: {
+    owner_occupied: "insurance_recommended",
+    rental: "legal_required",
+    svj: "legal_required",
+  },
+  has_electrical: {
+    owner_occupied: "insurance_recommended",
+    rental: "legal_required",
+    business: "legal_required",
+  },
+  has_lps: { owner_occupied: "recommended" },
+  has_pv: {},
+};
 
 export function PropertyContextForm({
   propertyId,
@@ -81,6 +122,10 @@ export function PropertyContextForm({
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [genResult, setGenResult] = useState<{
+    created: number;
+    skipped: number;
+  } | null>(null);
 
   const [usage, setUsage] = useState<UsageKey>(
     initial ? usageFromCtx(initial) : "owner_occupied",
@@ -96,29 +141,24 @@ export function PropertyContextForm({
     (initial?.chimney_fuel as FuelKey | null) ?? null,
   );
 
-  // Honesty preview: only the chimney is "legal_required" for owner-occupied homes;
-  // gas/electrical move to "recommended"/"insurance_recommended" unless the usage
-  // is rental / svj / business.
+  // Honesty preview — reflects exactly what the engine will create (see RULE_MATRIX).
   const previewWording = useMemo(() => {
-    const isOwnerHome = usage === "owner_occupied";
-    const out: { label: string; tone: "legal_required" | "recommended" | "insurance_recommended" }[] = [];
-    if (systems.has_chimney) {
-      out.push({ label: "Komín", tone: "legal_required" });
+    const out: { label: string; tone: PreviewTone }[] = [];
+    for (const s of SYSTEMS) {
+      if (!systems[s.key]) continue;
+      const tone = RULE_MATRIX[s.key][usage];
+      if (tone) out.push({ label: s.shortLabel, tone });
     }
-    if (systems.has_gas) {
-      out.push({
-        label: "Plyn",
-        tone: isOwnerHome ? "insurance_recommended" : "legal_required",
-      });
+    return out;
+  }, [usage, systems]);
+
+  // Systems present whose combination has NO matching rule (engine stays silent).
+  // We name them explicitly so the user understands why no reminder appears.
+  const silentSystems = useMemo(() => {
+    const out: string[] = [];
+    for (const s of SYSTEMS) {
+      if (systems[s.key] && !RULE_MATRIX[s.key][usage]) out.push(s.shortLabel);
     }
-    if (systems.has_electrical) {
-      out.push({
-        label: "Elektro",
-        tone: isOwnerHome ? "recommended" : "legal_required",
-      });
-    }
-    if (systems.has_lps) out.push({ label: "Hromosvod", tone: "recommended" });
-    if (systems.has_pv) out.push({ label: "Fotovoltaika", tone: "recommended" });
     return out;
   }, [usage, systems]);
 
@@ -131,6 +171,7 @@ export function PropertyContextForm({
     e.preventDefault();
     setError(null);
     setSaved(false);
+    setGenResult(null);
     const payload = {
       property_id: propertyId,
       owner_occupied: usage === "owner_occupied",
@@ -151,8 +192,39 @@ export function PropertyContextForm({
         return;
       }
       setSaved(true);
+
+      // Wire to the revize engine: recompute contextual reminders right away so
+      // the questionnaire actually does something. The engine produces honest
+      // drafts (correct wording_type) and de-duplicates, so re-saving is safe.
+      try {
+        const gen = await fetch("/api/revize/generate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ propertyId }),
+        });
+        if (gen.ok) {
+          const json = (await gen.json()) as {
+            created?: number;
+            skipped?: number;
+          };
+          setGenResult({
+            created: json.created ?? 0,
+            skipped: json.skipped ?? 0,
+          });
+        }
+      } catch {
+        // Saving the context is the primary action; reminder generation is a
+        // best-effort follow-up. The user can always recompute from Připomínky.
+      }
+
       router.refresh();
     });
+  }
+
+  function plural(n: number, one: string, few: string, many: string) {
+    if (n === 1) return one;
+    if (n >= 2 && n <= 4) return few;
+    return many;
   }
 
   return (
@@ -314,12 +386,22 @@ export function PropertyContextForm({
           </div>
         ) : (
           <p className="mt-4 text-sm text-muted">
-            Zatím jste nevybrali žádný systém.
+            Pro tuto kombinaci využití a systémů zatím nemáme žádnou připomínku
+            revize — buď jste nevybrali žádný systém, nebo pro daný režim
+            nevzniká povinnost ani doporučení.
+          </p>
+        )}
+
+        {silentSystems.length > 0 && previewWording.length > 0 && (
+          <p className="mt-3 text-xs text-muted">
+            U tohoto využití nepřipravujeme připomínku pro:{" "}
+            {silentSystems.join(", ")}. Neznamená to, že kontrola nedává smysl —
+            jen pro daný režim není zákonná ani pojistná povinnost.
           </p>
         )}
       </section>
 
-      <div className="flex items-center justify-end gap-3">
+      <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:justify-end">
         {saved && !pending && (
           <span className="flex items-center gap-1.5 text-sm text-teal">
             <CheckCircle2 size={16} />
@@ -328,9 +410,33 @@ export function PropertyContextForm({
         )}
         <Button type="submit" variant="primary" disabled={pending}>
           {pending && <Loader2 size={16} className="animate-spin" />}
-          Uložit kontext
+          Uložit a spočítat revize
         </Button>
       </div>
+
+      {saved && !pending && genResult && (
+        <div className="flex flex-col gap-1.5 rounded-md border border-teal/30 bg-teal-100/50 px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
+          <span className="text-ink">
+            {genResult.created > 0
+              ? `Z kontextu jsme připravili ${genResult.created} ${plural(
+                  genResult.created,
+                  "připomínku",
+                  "připomínky",
+                  "připomínek",
+                )} revizí.`
+              : genResult.skipped > 0
+                ? "Připomínky revizí už podle tohoto kontextu existují."
+                : "Z tohoto kontextu zatím nevyplývá žádná připomínka revize."}
+          </span>
+          <Link
+            href="/pripominky"
+            className="inline-flex items-center gap-1 font-medium text-teal transition-colors hover:text-ink"
+          >
+            Zobrazit připomínky
+            <ArrowRight size={15} />
+          </Link>
+        </div>
+      )}
     </form>
   );
 }

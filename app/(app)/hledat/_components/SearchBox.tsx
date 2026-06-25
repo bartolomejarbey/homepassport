@@ -146,9 +146,9 @@ export function SearchBox() {
                   {result.sources.map((s) => (
                     <li key={`${s.kind}:${s.id}`}>
                       <Link
-                        // Dynamická (běhová) cesta na detail dokumentu/majetku —
-                        // pod typovanými routami ji předáváme jako UrlObject.
-                        href={{ pathname: s.href }}
+                        // Běhová cesta na detail dokumentu/majetku (/dokumenty/:id,
+                        // /majetek/:id). typedRoutes je vypnuté → stačí string.
+                        href={s.href}
                         className="group flex items-center gap-2 text-sm text-navy hover:underline"
                       >
                         {s.kind === "document" ? (

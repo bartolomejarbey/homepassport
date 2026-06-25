@@ -6,6 +6,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 // E-mail kupujícího validujeme i přesto, že RLS hlídá přístup k nemovitosti.
 const Body = z.object({
@@ -72,7 +73,8 @@ export async function POST(request: Request) {
     );
   }
 
-  await sb.from("audit_events").insert({
+  // audit_events má jen SELECT policy (RLS); zápis proto vede přes service role.
+  await createAdminClient().from("audit_events").insert({
     actor_id: user.id,
     property_id: parsed.propertyId,
     action: "handover.invited",

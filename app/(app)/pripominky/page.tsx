@@ -2,6 +2,7 @@
 // (otevřené / hotové), každá s termínem a poctivým badge dle wording_type.
 // Akce "Spočítat revize" projde kontext nemovitosti a revize pravidla a založí
 // kontextové připomínky. Jasně odlišujeme povinné × doporučené × kvůli pojišťovně.
+import Link from "next/link";
 import { BellRing, Info } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 import { Card } from "@/components/ui/Card";
@@ -121,8 +122,14 @@ export default async function PripominkyPage() {
           </p>
           <p className="mt-1 text-sm text-ink-soft">
             Revize jsou vázané na konkrétní nemovitost a její využití. Přejděte do
-            sekce <strong className="font-medium text-ink">Nemovitost</strong>, založte
-            ji a vyplňte kontext — pak zde půjde spočítat revize.
+            sekce{" "}
+            <Link
+              href="/nemovitost"
+              className="font-medium text-honey-600 underline underline-offset-2"
+            >
+              Nemovitost
+            </Link>
+            , založte ji a vyplňte kontext — pak zde půjde spočítat revize.
           </p>
         </Card>
       ) : (

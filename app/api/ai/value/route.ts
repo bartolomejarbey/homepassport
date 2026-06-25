@@ -54,9 +54,20 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Odhad hodnoty selhal" }, { status: 502 });
   }
 
-  const low = typeof est.low === "number" ? est.low : null;
-  const high = typeof est.high === "number" ? est.high : null;
-  const confidence = typeof est.confidence === "number" ? est.confidence : null;
+  // Sanitace: bereme jen konečná nezáporná čísla. Pokud AI vrátí rozsah pozpátku
+  // (low > high), prohodíme ho, aby zobrazení "od–do" bylo vždy poctivé.
+  const cleanNum = (v: unknown): number | null =>
+    typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null;
+
+  let low = cleanNum(est.low);
+  let high = cleanNum(est.high);
+  if (low !== null && high !== null && low > high) {
+    [low, high] = [high, low];
+  }
+  const confidence =
+    typeof est.confidence === "number" && Number.isFinite(est.confidence)
+      ? Math.min(1, Math.max(0, est.confidence))
+      : null;
 
   // Uložená hodnota = střed rozsahu (hrubý odhad). Rozsah vracíme klientovi
   // pro čestné zobrazení "od–do".

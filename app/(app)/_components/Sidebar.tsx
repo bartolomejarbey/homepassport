@@ -1,31 +1,13 @@
 "use client";
 // Sidebar — calm, active-link-aware navigation for the authenticated app shell.
+// Shares its nav model with the mobile drawer (see nav-items.ts) so they stay in sync.
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import {
-  LayoutDashboard,
-  Home,
-  FileText,
-  Package,
-  BellRing,
-  Search,
-  Building2,
-} from "lucide-react";
 import { cn } from "@/lib/utils/cn";
+import { PRIMARY_NAV, SECONDARY_NAV, isNavActive } from "./nav-items";
 
-const nav = [
-  { href: "/prehled", label: "Přehled", icon: LayoutDashboard },
-  { href: "/nemovitost", label: "Nemovitost", icon: Home },
-  { href: "/dokumenty", label: "Dokumenty", icon: FileText },
-  { href: "/majetek", label: "Majetek", icon: Package },
-  { href: "/pripominky", label: "Připomínky", icon: BellRing },
-  { href: "/hledat", label: "Hledat", icon: Search },
-] as const;
-
-export function Sidebar() {
+export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
-  const isActive = (href: string) =>
-    pathname === href || pathname.startsWith(href + "/");
 
   const linkClass = (active: boolean) =>
     cn(
@@ -35,36 +17,29 @@ export function Sidebar() {
         : "text-ink-soft hover:bg-surface-2 hover:text-ink",
     );
 
+  const renderItem = ({ href, label, icon: Icon }: (typeof PRIMARY_NAV)[number]) => {
+    const active = isNavActive(pathname, href);
+    return (
+      <Link
+        key={href}
+        href={href}
+        onClick={onNavigate}
+        aria-current={active ? "page" : undefined}
+        className={linkClass(active)}
+      >
+        <Icon size={18} className={active ? "text-honey" : "text-muted"} />
+        {label}
+      </Link>
+    );
+  };
+
   return (
     <nav className="flex flex-col gap-1 p-3" aria-label="Hlavní navigace">
-      {nav.map(({ href, label, icon: Icon }) => {
-        const active = isActive(href);
-        return (
-          <Link
-            key={href}
-            href={href}
-            aria-current={active ? "page" : undefined}
-            className={linkClass(active)}
-          >
-            <Icon size={18} className={active ? "text-honey" : "text-muted"} />
-            {label}
-          </Link>
-        );
-      })}
+      {PRIMARY_NAV.map(renderItem)}
 
       <div className="my-2 border-t border-line" />
 
-      <Link
-        href="/pro"
-        aria-current={isActive("/pro") ? "page" : undefined}
-        className={linkClass(isActive("/pro"))}
-      >
-        <Building2
-          size={18}
-          className={isActive("/pro") ? "text-honey" : "text-muted"}
-        />
-        Pro firmy
-      </Link>
+      {SECONDARY_NAV.map(renderItem)}
     </nav>
   );
 }

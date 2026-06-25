@@ -38,11 +38,13 @@ type Guess = {
   confidence?: number;
 };
 
+// Nízká spolehlivost AI návrhu není „nebezpečí" ani zákonná povinnost — proto
+// nikdy červený (legal_required) tón. Jen neutrální / teplý odstín dle jistoty.
 function confidenceTone(c: number | null) {
   if (c === null) return "draft" as const;
   if (c >= 0.8) return "verified" as const;
   if (c >= 0.5) return "insurance_recommended" as const;
-  return "legal_required" as const;
+  return "draft" as const;
 }
 
 function fmtConfidence(c: number | null) {

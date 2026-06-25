@@ -2,6 +2,7 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { AuthForm } from "@/app/(auth)/_components/AuthForm";
+import { safeNextPath } from "@/app/(auth)/_components/safe-path";
 
 export const metadata = { title: "Registrace — Home Passport" };
 
@@ -16,7 +17,7 @@ export default async function SignupPage({
   const {
     data: { user },
   } = await sb.auth.getUser();
-  if (user) redirect(next && next.startsWith("/") ? next : "/prehled");
+  if (user) redirect(safeNextPath(next));
 
   return (
     <div>
