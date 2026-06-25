@@ -50,8 +50,12 @@ export function UploadCard({
   const fileRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
   const [category, setCategory] = useState<string>("other");
-  // A document tied to a property defaults to transferable (it follows the home on sale).
-  const [transferable, setTransferable] = useState(Boolean(propertyId));
+  // Přenositelnost je vlastnost VRSTVY NEMOVITOSTI: dokument může „putovat s domem"
+  // jen tehdy, je-li na nějakou nemovitost navázaný (handover joinuje podle
+  // property_id + transferable). Bez nemovitosti je dokument vždy soukromý —
+  // proto checkbox ukazujeme jen v kontextu nemovitosti a jinak vynutíme false.
+  const inPropertyContext = Boolean(propertyId);
+  const [transferable, setTransferable] = useState(inPropertyContext);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [, startTransition] = useTransition();
@@ -100,7 +104,9 @@ export function UploadCard({
           mime: file.type || null,
           size_bytes: file.size,
           owner_scope: propertyId ? "property" : "household",
-          transferable,
+          // Nikdy transferable=true bez nemovitosti (jinak osiřelý „přenosný"
+          // dokument, který nikam nepřejde a žádný pohled ho nezapočítá správně).
+          transferable: inPropertyContext ? transferable : false,
           uploaded_by: user?.id ?? null,
         })
         .select("id")
@@ -166,7 +172,13 @@ export function UploadCard({
           />
         </label>
 
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <div
+          className={
+            inPropertyContext
+              ? "grid grid-cols-1 gap-3 sm:grid-cols-2"
+              : "grid grid-cols-1 gap-3"
+          }
+        >
           <label className="block">
             <span className="mb-1 block text-xs font-medium text-ink-soft">Kategorie</span>
             <select
@@ -182,17 +194,20 @@ export function UploadCard({
             </select>
           </label>
 
-          <label className="flex items-end gap-2 pb-2">
-            <input
-              type="checkbox"
-              checked={transferable}
-              onChange={(e) => setTransferable(e.target.checked)}
-              className="h-4 w-4 rounded border-line text-navy focus:ring-navy/30"
-            />
-            <span className="text-sm text-ink-soft">
-              Patří k nemovitosti (přejde na kupujícího)
-            </span>
-          </label>
+          {/* Přenositelnost dává smysl jen u dokumentu vázaného na nemovitost. */}
+          {inPropertyContext && (
+            <label className="flex items-end gap-2 pb-2">
+              <input
+                type="checkbox"
+                checked={transferable}
+                onChange={(e) => setTransferable(e.target.checked)}
+                className="h-4 w-4 rounded border-line text-navy focus:ring-navy/30"
+              />
+              <span className="text-sm text-ink-soft">
+                Patří k nemovitosti (přejde na kupujícího)
+              </span>
+            </label>
+          )}
         </div>
 
         {error && (

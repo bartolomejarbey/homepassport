@@ -42,7 +42,7 @@ export async function POST(request: Request) {
   const base64 = Buffer.from(await blob.arrayBuffer()).toString("base64");
   const dataUrl = `data:${mime};base64,${base64}`;
 
-  let raw;
+  let raw: unknown;
   try {
     raw = await recognizeAsset(dataUrl);
   } catch {
@@ -52,20 +52,31 @@ export async function POST(request: Request) {
     );
   }
 
+  // recognizeAsset() vrací naparsovaný JSON od AI — při selhání to ale může být i
+  // jiný typ než objekt (null / pole). Zúžíme na bezpečný objekt, ať čtení polí
+  // níže nikdy nespadne (nikdy AI slepě nedůvěřujeme).
+  const r = (raw && typeof raw === "object" ? raw : {}) as {
+    name?: unknown;
+    category?: unknown;
+    brand?: unknown;
+    model?: unknown;
+    confidence?: unknown;
+  };
+
   // Sanitace návrhu: jen řetězce a spolehlivost sevřená do 0–1 (AI občas vrátí
   // > 1 nebo nesmysl). Vracíme NÁVRH — confidence vždy ukazujeme uživateli.
   const str = (v: unknown): string | undefined =>
     typeof v === "string" && v.trim() ? v.trim() : undefined;
   const confidence =
-    typeof raw.confidence === "number" && Number.isFinite(raw.confidence)
-      ? Math.min(1, Math.max(0, raw.confidence))
+    typeof r.confidence === "number" && Number.isFinite(r.confidence)
+      ? Math.min(1, Math.max(0, r.confidence))
       : undefined;
 
   const guess = {
-    name: str(raw.name),
-    category: str(raw.category),
-    brand: str(raw.brand),
-    model: str(raw.model),
+    name: str(r.name),
+    category: str(r.category),
+    brand: str(r.brand),
+    model: str(r.model),
     confidence,
   };
 

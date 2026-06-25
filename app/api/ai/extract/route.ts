@@ -4,7 +4,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
-import { extractDocument } from "@/lib/ai";
+import { extractDocument, type DocExtraction } from "@/lib/ai";
 
 const Body = z.object({ documentId: z.string().uuid() });
 
@@ -47,7 +47,7 @@ export async function POST(request: Request) {
   const base64 = Buffer.from(await blob.arrayBuffer()).toString("base64");
   const dataUrl = `data:${mime};base64,${base64}`;
 
-  let extracted;
+  let extracted: DocExtraction;
   try {
     extracted = await extractDocument(dataUrl);
   } catch {
@@ -73,7 +73,9 @@ export async function POST(request: Request) {
       document_id: doc.id,
       extracted,
       confidence,
-      provider: "openai",
+      // Provenance návrhu odpovídá skutečně použitému poskytovateli (provider je
+      // přepínatelný přes env — stejně jako v B2B nahrávání); jinak by řádek lhal o zdroji.
+      provider: process.env.AI_PROVIDER ?? "openai",
       model: process.env.AI_MODEL ?? "gpt-5.5",
       status: "draft",
     })

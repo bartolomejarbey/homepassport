@@ -4,6 +4,7 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
+import { z } from "zod";
 import { ArrowLeft, ExternalLink, Sparkles, CheckCircle2, XCircle, RefreshCw, Building2, BellRing } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 import { Card } from "@/components/ui/Card";
@@ -72,10 +73,17 @@ type ExtractionRow = {
 
 // ---- server actions -------------------------------------------------------
 
+// Každý vstup ze <form> validujeme Zod (i když RLS chrání data): id z formuláře
+// jdou přímo do dotazu na `uuid` sloupec — nevalidní hodnota (prázdno, "undefined")
+// by jinak shodila dotaz na „invalid input syntax for type uuid" jako 500.
+// Při nevalidním vstupu akce mlčky nic neprovede a stránka se překreslí beze změny.
+const uuidSchema = z.string().uuid();
+
 async function rejectExtraction(formData: FormData) {
   "use server";
-  const extractionId = String(formData.get("extractionId"));
-  const documentId = String(formData.get("documentId"));
+  const id = uuidSchema.safeParse(formData.get("extractionId"));
+  const docId = uuidSchema.safeParse(formData.get("documentId"));
+  if (!id.success || !docId.success) return;
   const sb = await createClient();
   const {
     data: { user },
@@ -86,14 +94,16 @@ async function rejectExtraction(formData: FormData) {
   await sb
     .from("document_extractions")
     .update({ status: "rejected", reviewed_by: user.id })
-    .eq("id", extractionId);
-  revalidatePath(`/dokumenty/${documentId}`);
+    .eq("id", id.data);
+  revalidatePath(`/dokumenty/${docId.data}`);
   revalidatePath("/dokumenty"); // odznak v seznamu vychází z nejnovější extrakce
 }
 
 async function confirmExtraction(formData: FormData) {
   "use server";
-  const extractionId = String(formData.get("extractionId"));
+  const id = uuidSchema.safeParse(formData.get("extractionId"));
+  if (!id.success) return;
+  const extractionId = id.data;
   const sb = await createClient();
   const {
     data: { user },
@@ -205,7 +215,9 @@ async function confirmExtraction(formData: FormData) {
 // vlastní dokument; když na něj nemá právo, select níže vrátí null a nic se nestane.
 async function deleteDocument(formData: FormData) {
   "use server";
-  const documentId = String(formData.get("documentId"));
+  const id = uuidSchema.safeParse(formData.get("documentId"));
+  if (!id.success) redirect("/dokumenty"); // nevalidní vstup — prostě zpět na seznam
+  const documentId = id.data;
   const sb = await createClient();
   const {
     data: { user },
@@ -235,7 +247,9 @@ async function deleteDocument(formData: FormData) {
 // Re-spuštění AI extrakce z detailu (když po nahrání selhala nebo byl návrh odmítnut).
 async function runExtraction(formData: FormData) {
   "use server";
-  const documentId = String(formData.get("documentId"));
+  const id = uuidSchema.safeParse(formData.get("documentId"));
+  if (!id.success) return;
+  const documentId = id.data;
   const sb = await createClient();
   const {
     data: { user },
@@ -278,7 +292,8 @@ async function runExtraction(formData: FormData) {
     document_id: doc.id,
     extracted,
     confidence,
-    provider: "openai",
+    // Provenance odpovídá skutečně použitému poskytovateli (přepínatelnému přes env).
+    provider: process.env.AI_PROVIDER ?? "openai",
     model: process.env.AI_MODEL ?? "gpt-5.5",
     status: "draft",
   });

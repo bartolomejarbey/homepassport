@@ -84,12 +84,21 @@ export async function snooze(formData: FormData): Promise<void> {
     .eq("id", id.data)
     .maybeSingle();
 
-  const base = current?.due_date ? new Date(current.due_date) : new Date();
-  // Snooze always moves into the future relative to now.
-  const now = new Date();
-  const from = base.getTime() > now.getTime() ? base : now;
-  from.setDate(from.getDate() + days.data);
-  const due = from.toISOString().slice(0, 10);
+  // Počítáme v celých kalendářních dnech a lokálním čase. due_date je 'YYYY-MM-DD';
+  // new Date(string) by ho vzal jako UTC a v ČR posunul o den — proto parsujeme
+  // i formátujeme lokálně, ať uložený termín přesně sedí s tím, co uvidí uživatel.
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  let base = today;
+  if (current?.due_date) {
+    const [y, m, d] = current.due_date.split("-").map(Number);
+    const parsed = new Date(y, (m ?? 1) - 1, d ?? 1);
+    // Snooze always moves into the future relative to today.
+    if (parsed.getTime() > today.getTime()) base = parsed;
+  }
+  base.setDate(base.getDate() + days.data);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const due = `${base.getFullYear()}-${pad(base.getMonth() + 1)}-${pad(base.getDate())}`;
 
   await sb
     .from("reminders")

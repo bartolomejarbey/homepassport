@@ -53,20 +53,37 @@ const SNOOZE_OPTIONS = [
   { days: 90, label: "o 3 měsíce" },
 ];
 
+// due_date je 'YYYY-MM-DD' (kalendářní den, bez času). Parsujeme ho jako LOKÁLNÍ
+// den — new Date('YYYY-MM-DD') by ho vzal jako UTC půlnoc a v ČR (UTC+1/+2) posunul
+// o den zpět, takže by se „dnes“ ukazovalo jako „po termínu“. Den proti dni tak
+// porovnáváme korektně bez vlivu časového pásma.
+function parseLocalDate(d: string): Date {
+  const [y, m, day] = d.split("-").map(Number);
+  return new Date(y, (m ?? 1) - 1, day ?? 1);
+}
+
 function fmtDate(d: string | null) {
   if (!d) return null;
-  return new Date(d).toLocaleDateString("cs-CZ");
+  return parseLocalDate(d).toLocaleDateString("cs-CZ");
+}
+
+// Česká skloňování dní: 1 den / 2–4 dny / 5+ dní.
+function dni(n: number) {
+  if (n === 1) return "den";
+  if (n >= 2 && n <= 4) return "dny";
+  return "dní";
 }
 
 function dueState(d: string | null) {
   if (!d) return { label: "termín neurčen", overdue: false };
-  const due = new Date(d);
+  const due = parseLocalDate(d);
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const diffDays = Math.round((due.getTime() - today.getTime()) / 86_400_000);
   if (diffDays < 0) return { label: `po termínu (${fmtDate(d)})`, overdue: true };
   if (diffDays === 0) return { label: "dnes", overdue: true };
-  if (diffDays <= 30) return { label: `za ${diffDays} dní (${fmtDate(d)})`, overdue: false };
+  if (diffDays <= 30)
+    return { label: `za ${diffDays} ${dni(diffDays)} (${fmtDate(d)})`, overdue: false };
   return { label: fmtDate(d)!, overdue: false };
 }
 

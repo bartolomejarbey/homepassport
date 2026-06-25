@@ -117,16 +117,23 @@ export async function getOrgProperty(propertyId: string): Promise<ProProperty | 
   return (data as ProProperty | null) ?? null;
 }
 
-/** Whether a live (pending, unexpired) handover invite exists for this property. */
-export async function getPropertyHasPendingInvite(propertyId: string): Promise<boolean> {
-  const { pending, handedOver } = await getOrgHandoverStats([propertyId]);
-  return pending.has(propertyId) && !handedOver.has(propertyId);
-}
+/**
+ * Handover state for a single property in ONE query (the detail page needs both
+ * flags; two separate helpers meant two identical round-trips to
+ * handover_invitations). `handedOver` wins over `hasPendingInvite` — once a buyer
+ * accepted, any leftover pending invite is moot and the UI must hide the dialog.
+ */
+export type PropertyHandoverState = { handedOver: boolean; hasPendingInvite: boolean };
 
-/** Whether the property has already reached a buyer (accepted invitation). */
-export async function getPropertyHandedOver(propertyId: string): Promise<boolean> {
-  const { handedOver } = await getOrgHandoverStats([propertyId]);
-  return handedOver.has(propertyId);
+export async function getPropertyHandoverState(
+  propertyId: string,
+): Promise<PropertyHandoverState> {
+  const { pending, handedOver } = await getOrgHandoverStats([propertyId]);
+  const isHandedOver = handedOver.has(propertyId);
+  return {
+    handedOver: isHandedOver,
+    hasPendingInvite: pending.has(propertyId) && !isHandedOver,
+  };
 }
 
 export type PassportDoc = {

@@ -21,6 +21,9 @@ type Source = {
 type Chunk = { id: string; text: string; source: Source };
 
 const MAX_CHUNKS = 8;
+// Kolik embeddings stáhneme jako kandidáty pro kosinové řazení v JS (když není
+// RPC). Strop drží náklady i u větších domácností; pro MVP objem dat dostačuje.
+const EMBEDDING_CANDIDATES = 200;
 // Strop pro výtahy z extrakcí: i kdyby jich bylo hodně, necháme místo i pro
 // připomínky a majetek (jinak by extrakce zabraly všech MAX_CHUNKS slotů a
 // relevantní revize/položka by do RAG kroku vůbec nedoputovaly).
@@ -78,30 +81,62 @@ export async function POST(request: Request) {
     .eq("household_id", householdId);
   const hasEmbeddings = (embCount ?? 0) > 0;
 
-  // --- 1) Sémantické vyhledávání přes pgvector (cosine, RPC) -----------------
-  // RPC match_embeddings je SECURITY INVOKER → respektuje RLS domácnosti.
-  // Pokud RPC v nasazení neexistuje, vrátí chybu a my spadneme na fallback níže.
+  // --- 1) Sémantické vyhledávání přes pgvector (cosine) ----------------------
+  // Dotaz nejdřív zembedujeme. Pak zkusíme rychlou cestu přes RPC match_embeddings
+  // (pokud v nasazení existuje a počítá podobnost v DB). Když RPC chybí nebo selže,
+  // spočítáme kosinovou podobnost přímo v JS nad kandidáty domácnosti — díky tomu
+  // sémantické hledání reálně funguje i bez RPC. Vše běží pod RLS přihlášeného
+  // uživatele (vidíme jen embeddings vlastní domácnosti). Pokud selže i embedování
+  // dotazu (výpadek AI), propadneme na textové fallbacky níže.
   if (hasEmbeddings) {
+    let queryEmbedding: number[] | null = null;
     try {
-      const queryEmbedding = await embed(query);
-      const { data: matches, error: rpcErr } = await sb.rpc("match_embeddings", {
-        query_embedding: queryEmbedding,
-        match_household_id: householdId,
-        match_count: MAX_CHUNKS,
-      });
-      if (!rpcErr && Array.isArray(matches)) {
-        chunks = (matches as EmbeddingMatch[])
-          .map(rowToChunk)
-          .filter((c): c is Chunk => c !== null);
-      }
+      queryEmbedding = await embed(query);
     } catch {
-      // Embedding nebo RPC nedostupné — spadneme na textový fallback níže.
+      // AI pro embedding nedostupné — sémantiku přeskočíme, jdeme na text. fallback.
+      queryEmbedding = null;
+    }
+
+    if (queryEmbedding && queryEmbedding.length > 0) {
+      // 1a) Rychlá cesta: RPC počítající podobnost v Postgresu (pokud existuje).
+      try {
+        const { data: matches, error: rpcErr } = await sb.rpc("match_embeddings", {
+          query_embedding: queryEmbedding,
+          match_household_id: householdId,
+          match_count: MAX_CHUNKS,
+        });
+        if (!rpcErr && Array.isArray(matches) && matches.length > 0) {
+          chunks = (matches as EmbeddingMatch[])
+            .map(rowToChunk)
+            .filter((c): c is Chunk => c !== null);
+        }
+      } catch {
+        // RPC v nasazení neexistuje / selhalo — spočítáme podobnost v JS níže.
+      }
+
+      // 1b) Záloha bez RPC: stáhneme kandidáty (RLS = jen vlastní domácnost) a
+      // seřadíme je kosinovou podobností v JS. Bereme rozumné okno řádků, ať to
+      // zůstane levné i u větších domácností; pro MVP objem dat plně dostačuje.
+      if (chunks.length === 0) {
+        const { data: rows } = await sb
+          .from("embeddings")
+          .select("id, document_id, asset_id, chunk_text, metadata, embedding")
+          .eq("household_id", householdId)
+          .not("embedding", "is", null)
+          .limit(EMBEDDING_CANDIDATES);
+        chunks = rankByCosine(
+          (rows ?? []) as EmbeddingMatch[],
+          queryEmbedding,
+          MAX_CHUNKS,
+        );
+      }
     }
   }
 
   // --- 2) Fallback A: textové hledání přímo nad embeddings.chunk_text --------
-  // Spustí se, když RPC chybí, ale embeddings (úryvky textu) už existují —
-  // tak dáme RAG kroku skutečný obsah dokumentů, ne jen názvy.
+  // Spustí se, když embeddings (úryvky textu) existují, ale sémantika nedala
+  // výsledek (např. výpadek embedovacího modelu) — dáme RAG kroku aspoň skutečný
+  // obsah dokumentů podle shody v textu, ne jen názvy.
   if (chunks.length === 0 && hasEmbeddings) {
     const like = ilikePattern(query);
     if (like) {
@@ -194,6 +229,9 @@ type EmbeddingMatch = {
   asset_id: string | null;
   chunk_text: string | null;
   metadata: { title?: string; name?: string } | null;
+  // pgvector sloupec se přes PostgREST vrací jako string ("[0.1,0.2,...]"),
+  // u RPC cesty může chybět úplně. Pro řazení ho parsujeme v parseVector().
+  embedding?: number[] | string | null;
 };
 
 type SupaClient = Awaited<ReturnType<typeof createClient>>;
@@ -374,6 +412,59 @@ function summarizeExtraction(extracted: unknown): string | null {
     parts.push(`číslo revize ${e.inspection_no}`);
   if (typeof e.date === "string" && e.date.trim()) parts.push(`datum ${e.date}`);
   return parts.length ? parts.join("; ") + "." : null;
+}
+
+// pgvector hodnota → number[]. PostgREST ji vrací jako text "[0.1,0.2,...]",
+// ale ošetříme i případ, že už přijde jako pole (RPC/jiný klient). Vadné nebo
+// prázdné vektory zahodíme (null), ať nekazí kosinový výpočet.
+function parseVector(v: number[] | string | null | undefined): number[] | null {
+  if (Array.isArray(v)) return v.length ? v : null;
+  if (typeof v !== "string") return null;
+  const inner = v.trim().replace(/^\[/, "").replace(/\]$/, "");
+  if (!inner) return null;
+  const nums: number[] = [];
+  for (const part of inner.split(",")) {
+    const n = Number(part);
+    if (!Number.isFinite(n)) return null;
+    nums.push(n);
+  }
+  return nums.length ? nums : null;
+}
+
+// Kosinová podobnost dvou stejně dlouhých vektorů. Rozdílná délka nebo nulový
+// vektor → 0 (žádná podobnost), ať se neobjeví NaN v řazení.
+function cosineSim(a: number[], b: number[]): number {
+  if (a.length !== b.length) return 0;
+  let dot = 0;
+  let na = 0;
+  let nb = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+    na += a[i] * a[i];
+    nb += b[i] * b[i];
+  }
+  if (na === 0 || nb === 0) return 0;
+  return dot / (Math.sqrt(na) * Math.sqrt(nb));
+}
+
+// Seřaď kandidáty z `embeddings` podle kosinové podobnosti k dotazu a vrať
+// nejvýše `limit` nejbližších jako citovatelné úryvky. Tohle je plnohodnotná
+// náhrada pgvector RPC, počítaná v JS — sémantické hledání tak funguje i bez RPC.
+function rankByCosine(
+  rows: EmbeddingMatch[],
+  queryEmbedding: number[],
+  limit: number,
+): Chunk[] {
+  const scored: { score: number; chunk: Chunk }[] = [];
+  for (const row of rows) {
+    const chunk = rowToChunk(row);
+    if (!chunk) continue; // bez textu nemá smysl citovat
+    const vec = parseVector(row.embedding);
+    if (!vec) continue;
+    scored.push({ score: cosineSim(vec, queryEmbedding), chunk });
+  }
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, limit).map((s) => s.chunk);
 }
 
 function rowToChunk(row: EmbeddingMatch): Chunk | null {

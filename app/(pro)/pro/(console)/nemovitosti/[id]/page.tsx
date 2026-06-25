@@ -13,8 +13,7 @@ import { ProUploadCard } from "../../../../_components/ProUploadCard";
 import {
   getOrgProperty,
   getPassportDocuments,
-  getPropertyHasPendingInvite,
-  getPropertyHandedOver,
+  getPropertyHandoverState,
 } from "../../../../_components/data";
 import {
   TYPE_LABELS,
@@ -55,10 +54,9 @@ export default async function ProPropertyDetailPage({
   const property = await getOrgProperty(id);
   if (!property) notFound();
 
-  const [docs, handedOver, hasPending] = await Promise.all([
+  const [docs, { handedOver, hasPendingInvite: hasPending }] = await Promise.all([
     getPassportDocuments(id),
-    getPropertyHandedOver(id),
-    getPropertyHasPendingInvite(id),
+    getPropertyHandoverState(id),
   ]);
 
   const label = propertyName(property);

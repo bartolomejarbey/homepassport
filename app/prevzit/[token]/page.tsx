@@ -372,6 +372,7 @@ export default async function PrevzitPage({
     label: string;
     dateLabel: string;
     sortKey: number;
+    kind: "warranty" | "penb" | "inspection";
   };
   const keyDates: KeyDate[] = [];
   for (const d of docs) {
@@ -389,6 +390,7 @@ export default async function PrevzitPage({
           label: `Konec záruky — ${docLabel}`,
           dateLabel: f,
           sortKey: Date.parse(ex.warranty_until),
+          kind: "warranty",
         });
     }
     if (d.category === "penb" && ex.date) {
@@ -399,6 +401,7 @@ export default async function PrevzitPage({
           label: `PENB vystaven — ${docLabel}`,
           dateLabel: f,
           sortKey: Date.parse(ex.date),
+          kind: "penb",
         });
     }
     if (d.category === "inspection" && ex.date) {
@@ -409,10 +412,16 @@ export default async function PrevzitPage({
           label: `Revize provedena — ${docLabel}`,
           dateLabel: f,
           sortKey: Date.parse(ex.date),
+          kind: "inspection",
         });
     }
   }
   keyDates.sort((a, b) => a.sortKey - b.sortKey);
+  // Poctivost (HARD RULE: kontextová formulace): větu o tom, že datum revize je
+  // datum jejího PROVEDENÍ, ukaž jen tehdy, když mezi klíčovými daty revize vážně
+  // je. Termín další revize navíc plyne z kontextu nemovitosti, který se kupujícímu
+  // odkryje až po převzetí — proto ho tu neslibujeme, jen na něj korektně odkážeme.
+  const hasInspectionDate = keyDates.some((k) => k.kind === "inspection");
 
   // Top dokumenty pro úvodní hodnotu — pár nejdůležitějších, s náhledem i stažením.
   const CATEGORY_PRIORITY: Record<string, number> = {
@@ -611,8 +620,10 @@ export default async function PrevzitPage({
                 </ul>
                 <p className="mt-2 flex items-start gap-1.5 text-xs text-muted">
                   <BadgeCheck size={13} className="mt-0.5 shrink-0 text-teal" />
-                  Data pocházejí z potvrzených dokumentů. Datum revize je datum
-                  jejího provedení — termín další revize plyne z kontextu nemovitosti.
+                  Data pocházejí z potvrzených dokumentů.
+                  {hasInspectionDate
+                    ? " Datum revize je datum jejího provedení — termín další revize se vám odkryje po převzetí, podle kontextu nemovitosti."
+                    : ""}
                 </p>
               </div>
             )}

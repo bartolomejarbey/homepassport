@@ -15,12 +15,15 @@ import type { PropertyContext, RevisionRule } from "@/lib/db/types";
 
 const Body = z.object({ propertyId: z.string().uuid() });
 
-/** Suggested first due date: today + interval_months (null interval => no date). */
+/** Suggested first due date: today + interval_months (null interval => no date).
+ *  Formátujeme lokálně (ne toISOString) — due_date je kalendářní den a uložená
+ *  hodnota tak sedí s tím, co uživatel vidí, bez posunu časovým pásmem. */
 function suggestDueDate(intervalMonths: number | null): string | null {
   if (!intervalMonths || intervalMonths <= 0) return null;
   const d = new Date();
   d.setMonth(d.getMonth() + intervalMonths);
-  return d.toISOString().slice(0, 10);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
 export async function POST(request: Request) {
@@ -147,8 +150,16 @@ export async function POST(request: Request) {
     .eq("property_id", parsed.propertyId)
     .eq("type", "inspection");
   const existing = existingData ?? [];
+
+  // Dedup blokuje JEN aktivní (open/snoozed) připomínky. Vyřízená (done) revize je
+  // uzavřený minulý cyklus — opětovné „Spočítat revize“ má pak naplánovat další
+  // termín, ne navždy mlčet. Dismissed je buď supersedovaná, nebo ručně zahozená;
+  // ani ta nesmí trvale blokovat nové znění. Tím je tlačítko užitečné i v čase.
+  const isActive = (s: string) => s === "open" || s === "snoozed";
   const seen = new Set(
-    existing.map((r) => `${r.title} ${r.legal_basis ?? ""}`),
+    existing
+      .filter((r) => isActive(r.status))
+      .map((r) => `${r.title} ${r.legal_basis ?? ""}`),
   );
 
   // Mapa legal_basis -> system_type přes VŠECHNA načtená pravidla (napříč režimy
@@ -170,7 +181,7 @@ export async function POST(request: Request) {
   // Pracujeme jen s připomínkami, jejichž systém umíme rozpoznat z legal_basis
   // (mapa basisToSystem), a jen s typem 'inspection' (filtr v dotazu výše).
   const supersededIds = existing
-    .filter((r) => r.status === "open" || r.status === "snoozed")
+    .filter((r) => isActive(r.status))
     .filter((r) => {
       const sys = r.legal_basis ? basisToSystem.get(r.legal_basis) : undefined;
       // Bez rozpoznaného systému nesaháme — mohlo by jít o ručně přidanou připomínku.

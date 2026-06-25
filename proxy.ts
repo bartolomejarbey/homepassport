@@ -85,8 +85,13 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  // Run on all paths except static assets, image optimizer, and metadata files.
+  // Run on all paths EXCEPT:
+  //  • static assets / image optimizer / metadata files,
+  //  • /api/* and /auth/* route handlers — none of these are protected pages, and
+  //    /auth/callback runs its OWN session exchange, so refreshing the session here
+  //    first is a wasted Supabase round-trip (and could race a just-rotated cookie).
+  // Page protection is unchanged: no protected prefix lives under /api or /auth.
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|sitemap.xml|robots.txt|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)",
+    "/((?!api|auth|_next/static|_next/image|favicon.ico|sitemap.xml|robots.txt|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)",
   ],
 };

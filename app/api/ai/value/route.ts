@@ -49,7 +49,7 @@ export async function POST(request: Request) {
     ? `${asset.name} ${asset.model}`.trim()
     : asset.name;
 
-  let est;
+  let est: unknown;
   try {
     est = await estimateValue({
       name: nameForEstimate,
@@ -60,27 +60,35 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Odhad hodnoty selhal" }, { status: 502 });
   }
 
+  // estimateValue() vrací JSON od AI — při selhání parsování to ale může být i
+  // jiný typ než objekt (null / pole). Zúžíme na bezpečný objekt, ať čtení polí
+  // níže nikdy nespadne (nikdy AI slepě nedůvěřujeme).
+  const e = (est && typeof est === "object" ? est : {}) as {
+    low?: unknown;
+    high?: unknown;
+    confidence?: unknown;
+  };
+
   // Sanitace: bereme jen konečná nezáporná čísla. Pokud AI vrátí rozsah pozpátku
   // (low > high), prohodíme ho, aby zobrazení "od–do" bylo vždy poctivé.
   const cleanNum = (v: unknown): number | null =>
     typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null;
 
-  let low = cleanNum(est.low);
-  let high = cleanNum(est.high);
+  let low = cleanNum(e.low);
+  let high = cleanNum(e.high);
   if (low !== null && high !== null && low > high) {
     [low, high] = [high, low];
   }
   const confidence =
-    typeof est.confidence === "number" && Number.isFinite(est.confidence)
-      ? Math.min(1, Math.max(0, est.confidence))
+    typeof e.confidence === "number" && Number.isFinite(e.confidence)
+      ? Math.min(1, Math.max(0, e.confidence))
       : null;
 
-  // Měna musí být platný 3písmenný ISO kód, jinak by Intl.NumberFormat na
-  // klientovi spadl (AI občas vrátí "Kč" apod.). Při pochybnosti → CZK.
-  const currency =
-    typeof est.currency === "string" && /^[A-Za-z]{3}$/.test(est.currency)
-      ? est.currency.toUpperCase()
-      : "CZK";
+  // estimateValue() je smluvně odhad v CZK (a celá zobrazovací vrstva — seznam,
+  // detail i souhrn — počítá výhradně v Kč a hodnoty sčítá). Sloupec currency
+  // navíc neukládáme. Měnu proto držíme napevno na CZK; kdybychom propustili cizí
+  // kód od AI, uložené číslo by se jinde vykreslilo a sečetlo jako koruny.
+  const currency = "CZK";
 
   // Uložená hodnota = střed rozsahu (hrubý odhad). Rozsah vracíme klientovi
   // pro čestné zobrazení "od–do".

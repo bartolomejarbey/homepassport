@@ -81,10 +81,13 @@ export default async function NemovitostiPage() {
       </header>
 
       {properties.length === 0 ? (
-        <EmptyState
-          title="Zatím žádná nemovitost"
-          hint="Založte první nemovitost a začněte plnit její pas — dokumenty, revize, záruky i vybavení."
-        />
+        <div className="flex flex-col items-center gap-5">
+          <EmptyState
+            title="Zatím žádná nemovitost"
+            hint="Založte první nemovitost a začněte plnit její pas — dokumenty, revize, záruky i vybavení."
+          />
+          <CreatePropertyButton />
+        </div>
       ) : (
         <ul className="space-y-3">
           {properties.map((p) => {

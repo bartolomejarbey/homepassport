@@ -257,16 +257,26 @@ export async function uploadOrgDocument(input: unknown): Promise<UploadDocResult
   try {
     const dataUrl = `data:${contentType};base64,${data_base64}`;
     const result = await extractDocument(dataUrl);
-    const confidence = typeof result.confidence === "number" ? result.confidence : null;
-    const { error: exErr } = await admin.from("document_extractions").insert({
-      document_id: doc.id,
-      extracted: result,
-      confidence,
-      provider: process.env.AI_PROVIDER ?? "openai",
-      model: process.env.AI_MODEL ?? "gpt-5.5",
-      status: "draft",
-    });
-    extracted = !exErr;
+    // Only persist a draft when the model actually returned substantive fields.
+    // extractDocument falls back to {} on a parse miss, and a confidence-only
+    // object carries no data — surfacing either as a "Návrh" to confirm would be a
+    // hollow, dishonest prompt. In that case we leave the doc without a draft so
+    // the UI shows no badge and extraction can be retried later.
+    const hasContent = Object.entries(result).some(
+      ([k, v]) => k !== "confidence" && v !== null && v !== undefined && v !== "",
+    );
+    if (hasContent) {
+      const confidence = typeof result.confidence === "number" ? result.confidence : null;
+      const { error: exErr } = await admin.from("document_extractions").insert({
+        document_id: doc.id,
+        extracted: result,
+        confidence,
+        provider: process.env.AI_PROVIDER ?? "openai",
+        model: process.env.AI_MODEL ?? "gpt-5.5",
+        status: "draft",
+      });
+      extracted = !exErr;
+    }
   } catch {
     extracted = false;
   }
