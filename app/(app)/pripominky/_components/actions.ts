@@ -4,14 +4,12 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-
-const idSchema = z.string().uuid();
-
-// Snooze options in days, surfaced as a small select in the UI.
-const snoozeSchema = z.coerce.number().int().min(1).max(365);
+import {
+  reminderIdSchema as idSchema,
+  snoozeDaysSchema as snoozeSchema,
+} from "@/lib/validation/schemas";
 
 // Bound directly to <form action> — must return void (React's form-action type).
 // On invalid input we simply no-op; the form re-renders the unchanged reminder.

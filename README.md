@@ -27,6 +27,17 @@ npm install
 npm run dev
 ```
 
+## CI a testy
+Každý push a pull request do `main` spouští GitHub Actions workflow
+(`.github/workflows/ci.yml`) na Node 22: `npm ci` → typecheck (`tsc --noEmit`) →
+`npm run build` → `npm test`.
+
+### Testy
+Jednotkové testy běží přes **Vitest** (`npm test`, tj. `vitest run`). Pokrývají čistou
+logiku: revizní engine a jeho hraniční případy, deduplikaci připomínek, ochranu proti
+open-redirectu, bezpečné skládání cest k souborům, validační Zod schémata, parsování
+AI výstupů a `cn()` merger tříd. Žádný test nevyžaduje DB ani síť.
+
 ## Demo data
 Aby šla aplikace hned prozkoumat, je v `supabase/seed_demo.sql` připravená realistická
 ukázková domácnost: 1 domácnost + členství, 1 aktivní rodinný dům s kontextem

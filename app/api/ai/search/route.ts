@@ -4,11 +4,10 @@
 // 3) ragAnswer() s citacemi. Nikdy neodpovídá mimo data uživatele: bez podkladů
 //    vrátíme prázdnou odpověď. Veškeré dotazy běží pod RLS přihlášeného uživatele.
 import { NextResponse } from "next/server";
-import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { embed, ragAnswer } from "@/lib/ai";
-
-const Body = z.object({ query: z.string().trim().min(2).max(500) });
+import { aiSearchBody as Body } from "@/lib/validation/schemas";
+import { jsonError, readJson, rejectIfTooLarge, rateLimitGuard } from "@/lib/util/api";
 
 // Zdroj citace odkazuje zpět na konkrétní dokument, položku majetku nebo
 // připomínku (revize/záruka). Detail se otevře na příslušné stránce.
@@ -34,29 +33,51 @@ const EXTRACTION_CANDIDATES = 40;
 const DISCLAIMER =
   "Asistent odpovídá pouze na základě vašich vlastních dokumentů a majetku. Nejde o právní radu.";
 
+// Tenký obal: vstupní limit + auth + rate-limit + poslední záchrana (vždy JSON).
+// Vlastní logika hledání je v handleSearch() níže (autorizovaný uživatel se
+// předává dovnitř, ať se getUser() nevolá dvakrát).
 export async function POST(request: Request) {
-  // RLS běží pod přihlášeným uživatelem — bez přihlášení nic nevidíme.
-  const sb = await createClient();
-  const {
-    data: { user },
-  } = await sb.auth.getUser();
-  if (!user) {
-    return NextResponse.json({ error: "Neautorizováno" }, { status: 401 });
-  }
-
-  let parsed: z.infer<typeof Body>;
   try {
-    parsed = Body.parse(await request.json());
+    // Dotaz je krátký řetězec (zod: 2..500 znaků) — větší tělo odmítneme předem.
+    const tooLarge = rejectIfTooLarge(request);
+    if (tooLarge) return tooLarge;
+
+    // RLS běží pod přihlášeným uživatelem — bez přihlášení nic nevidíme.
+    const sb = await createClient();
+    const {
+      data: { user },
+    } = await sb.auth.getUser();
+    if (!user) {
+      return jsonError("Neautorizováno", 401, "unauthorized");
+    }
+
+    // Per-uživatel rate-limit (ochrana proti runaway nákladům na embed + RAG).
+    const limited = rateLimitGuard("ai:search", user.id);
+    if (limited) return limited;
+
+    const parsedInput = Body.safeParse(await readJson(request));
+    if (!parsedInput.success) {
+      return jsonError("Neplatný dotaz", 400, "invalid_input");
+    }
+
+    return await handleSearch(sb, user.id, parsedInput.data.query);
   } catch {
-    return NextResponse.json({ error: "Neplatný dotaz" }, { status: 400 });
+    // Cokoli neočekávaného (DB výpadek apod.) → čistý JSON 500, ne HTML stránka.
+    return jsonError("Neočekávaná chyba serveru", 500, "internal_error");
   }
-  const query = parsed.query;
+}
+
+async function handleSearch(
+  sb: SupaClient,
+  userId: string,
+  query: string,
+): Promise<NextResponse> {
 
   // Najdi domácnost uživatele (RLS zaručí, že jde o vlastní domácnost).
   const { data: membership } = await sb
     .from("household_members")
     .select("household_id")
-    .eq("user_id", user.id)
+    .eq("user_id", userId)
     .limit(1)
     .maybeSingle();
   const householdId = membership?.household_id ?? null;

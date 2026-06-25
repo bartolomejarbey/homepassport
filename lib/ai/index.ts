@@ -1,17 +1,38 @@
 import "server-only";
 import OpenAI from "openai";
+import { parseJsonObject } from "./parse";
 
 // Single multimodal provider for extraction / vision / RAG. Swappable via env.
 // Keep data in EU: set AI_BASE_URL to an EU endpoint and sign a DPA.
 const model = process.env.AI_MODEL ?? "gpt-5.5";
+
+// Hard per-request timeout for every provider call. Without this the SDK would
+// wait on a hung connection indefinitely, holding the route open and blocking
+// the user (the upload/asset is best-effort, so a stuck AI call must fail fast
+// and let the route return a clean error). Tunable via env for slower models /
+// regions; clamped to a sane floor so it can't be set absurdly low. `maxRetries`
+// is bounded to 1: this is a cost-sensitive path, so we retry once on a
+// transient network blip but never fan out into many paid attempts.
+const AI_TIMEOUT_MS = (() => {
+  const raw = Number(process.env.AI_TIMEOUT_MS);
+  return Number.isFinite(raw) && raw >= 1000 ? raw : 30_000;
+})();
+
 function client() {
   return new OpenAI({
     apiKey: process.env.OPENAI_API_KEY!,
     baseURL: process.env.AI_BASE_URL || undefined,
+    timeout: AI_TIMEOUT_MS,
+    maxRetries: 1,
   });
 }
 
-async function jsonCall(system: string, content: OpenAI.Chat.ChatCompletionContentPart[] | string) {
+// Returns `any` on purpose: the typed wrappers below (extractDocument, …) narrow
+// the model's free-form JSON to their own shapes, exactly as the previous inline
+// `JSON.parse(...)` (which is `any`) allowed. parseJsonObject itself stays
+// `unknown` so the pure fallback can be tested without loosening this boundary.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function jsonCall(system: string, content: OpenAI.Chat.ChatCompletionContentPart[] | string): Promise<any> {
   const res = await client().chat.completions.create({
     model,
     response_format: { type: "json_object" },
@@ -21,8 +42,7 @@ async function jsonCall(system: string, content: OpenAI.Chat.ChatCompletionConte
       { role: "user", content: content as any },
     ],
   });
-  try { return JSON.parse(res.choices[0]?.message?.content ?? "{}"); }
-  catch { return {}; }
+  return parseJsonObject(res.choices[0]?.message?.content);
 }
 
 export interface DocExtraction {

@@ -9,6 +9,17 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": fileURLToPath(new URL("./", import.meta.url)),
+      // `server-only` is a build-time marker Next aliases away when bundling for
+      // the server; it has no standalone entry to resolve under Node/vitest. Map
+      // it to Next's own empty stub so pure server-side utils that import it (the
+      // rate-limit cost guard) can be unit-tested. This mirrors what the Next
+      // build does and changes no runtime behaviour.
+      "server-only": fileURLToPath(
+        new URL(
+          "./node_modules/next/dist/compiled/server-only/empty.js",
+          import.meta.url,
+        ),
+      ),
     },
   },
   test: {

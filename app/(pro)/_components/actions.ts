@@ -5,16 +5,18 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { extractDocument } from "@/lib/ai";
+import {
+  orgSchema,
+  orgPropertySchema as propertySchema,
+  orgUploadSchema as uploadSchema,
+  extractionReviewSchema as reviewSchema,
+  DOC_CATEGORIES,
+} from "@/lib/validation/schemas";
 
 // ---------- create organization (via bootstrap RPC) ----------
-const orgSchema = z.object({
-  name: z.string().trim().min(2, "Zadejte název firmy.").max(160),
-});
-
 export type CreateOrgResult = { ok: false; error: string } | { ok: true; id: string };
 
 export async function createOrganization(input: unknown): Promise<CreateOrgResult> {
@@ -52,15 +54,6 @@ export async function createOrganization(input: unknown): Promise<CreateOrgResul
 }
 
 // ---------- create a builder-owned property passport ----------
-const propertySchema = z.object({
-  organization_id: z.string().uuid(),
-  type: z.enum(["house", "apartment", "unit", "land", "commercial"]),
-  title: z.string().trim().max(160).optional().or(z.literal("")),
-  street: z.string().trim().max(160).optional().or(z.literal("")),
-  city: z.string().trim().max(120).optional().or(z.literal("")),
-  postal_code: z.string().trim().max(20).optional().or(z.literal("")),
-});
-
 export type CreatePropertyResult = { ok: false; error: string } | { ok: true; id: string };
 
 export async function createOrgProperty(input: unknown): Promise<CreatePropertyResult> {
@@ -151,21 +144,9 @@ export async function createOrgProperty(input: unknown): Promise<CreatePropertyR
 // first path segment to be a household the user belongs to — an org property has
 // none — so the upload itself MUST go through the service role after we verify the
 // caller's org access. We key the path by property_id and never expose it raw.
-const DOC_CATEGORIES = [
-  "contract", "invoice", "penb", "inspection",
-  "manual", "warranty", "plan", "insurance", "other",
-] as const;
-
-const uploadSchema = z.object({
-  property_id: z.string().uuid(),
-  category: z.enum(DOC_CATEGORIES),
-  // Base64 (data URL stripped client-side) keeps the action self-contained — no
-  // separate signed-upload round-trip that storage RLS would block for orgs.
-  filename: z.string().trim().min(1).max(200),
-  mime: z.string().trim().max(120).optional(),
-  size_bytes: z.number().int().nonnegative().max(25 * 1024 * 1024),
-  data_base64: z.string().min(1),
-});
+// DOC_CATEGORIES + orgUploadSchema live in lib/validation/schemas.ts. The base64
+// payload (data URL stripped client-side) keeps the action self-contained — no
+// separate signed-upload round-trip that storage RLS would block for orgs.
 
 export type UploadDocResult =
   | { ok: false; error: string }
@@ -330,12 +311,9 @@ function normalizeDocCategory(raw: unknown): (typeof DOC_CATEGORIES)[number] | n
   return DOC_CATEGORY_ALIASES[v] ?? null;
 }
 
-const reviewSchema = z.object({
-  extraction_id: z.string().uuid(),
-  // property_id is only used to scope revalidation; the source of truth for access
-  // is the extraction's own document (read back under RLS), never this input.
-  property_id: z.string().uuid(),
-});
+// extractionReviewSchema (imported as reviewSchema) lives in lib/validation/schemas.ts.
+// property_id is only used to scope revalidation; the source of truth for access is
+// the extraction's own document (read back under RLS), never this input.
 
 export type ReviewResult = { ok: false; error: string } | { ok: true };
 

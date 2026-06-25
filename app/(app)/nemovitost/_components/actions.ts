@@ -2,18 +2,15 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import {
+  propertyCreateSchema as propertySchema,
+  propertyContextSchema as contextSchema,
+  propertyUpdateSchema as updateSchema,
+} from "@/lib/validation/schemas";
 
 // ---------- create property ----------
-const propertySchema = z.object({
-  type: z.enum(["house", "apartment", "unit", "land", "commercial"]),
-  title: z.string().trim().max(120).optional().or(z.literal("")),
-  street: z.string().trim().max(160).optional().or(z.literal("")),
-  city: z.string().trim().max(120).optional().or(z.literal("")),
-  postal_code: z.string().trim().max(20).optional().or(z.literal("")),
-});
 
 export type CreatePropertyResult = { ok: false; error: string } | { ok: true; id: string };
 
@@ -108,22 +105,6 @@ export async function createProperty(input: unknown): Promise<CreatePropertyResu
 }
 
 // ---------- update context (questionnaire) ----------
-const contextSchema = z
-  .object({
-    property_id: z.string().uuid(),
-    owner_occupied: z.boolean(),
-    rental: z.boolean(),
-    svj: z.boolean(),
-    business_use: z.boolean(),
-    has_chimney: z.boolean(),
-    chimney_fuel: z.enum(["solid", "liquid", "gas"]).nullable(),
-    has_gas: z.boolean(),
-    has_electrical: z.boolean(),
-    has_lps: z.boolean(),
-    has_pv: z.boolean(),
-  })
-  .strict();
-
 export type UpdateContextResult = { ok: false; error: string } | { ok: true };
 
 export async function updatePropertyContext(input: unknown): Promise<UpdateContextResult> {
@@ -174,21 +155,7 @@ export async function updatePropertyContext(input: unknown): Promise<UpdateConte
 // only collect the essentials, and cadastral_id isn't captured there at all even
 // though the detail header shows it. This action backs the inline "Upravit údaje"
 // form on the detail page so the passport is a living record, not a one-shot insert.
-const updateSchema = z
-  .object({
-    id: z.string().uuid(),
-    type: z.enum(["house", "apartment", "unit", "land", "commercial"]),
-    title: z.string().trim().max(120).optional().or(z.literal("")),
-    street: z.string().trim().max(160).optional().or(z.literal("")),
-    city: z.string().trim().max(120).optional().or(z.literal("")),
-    postal_code: z.string().trim().max(20).optional().or(z.literal("")),
-    cadastral_id: z.string().trim().max(40).optional().or(z.literal("")),
-    // 'transferred' is system-driven by a completed handover, never set by hand,
-    // so we deliberately exclude it from manual control to keep status honest.
-    status: z.enum(["draft", "active", "archived"]),
-  })
-  .strict();
-
+// Schema (propertyUpdateSchema, .strict()) lives in lib/validation/schemas.ts.
 export type UpdatePropertyResult = { ok: false; error: string } | { ok: true };
 
 export async function updateProperty(input: unknown): Promise<UpdatePropertyResult> {
