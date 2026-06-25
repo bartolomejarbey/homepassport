@@ -5,7 +5,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { ArrowLeft, ExternalLink, Sparkles, CheckCircle2, XCircle, RefreshCw, Building2, BellRing } from "lucide-react";
+import { ArrowLeft, ExternalLink, Sparkles, CheckCircle2, XCircle, RefreshCw, Building2, BellRing, FileText } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
@@ -423,7 +423,12 @@ export default async function DokumentDetailPage({
     .from("documents")
     .createSignedUrl(doc.file_path, 3600);
   const previewUrl = signed?.signedUrl ?? null;
-  const isImage = (doc.mime ?? "").startsWith("image/");
+  const mimeLower = (doc.mime ?? "").toLowerCase();
+  const isImage = mimeLower.startsWith("image/");
+  // HEIC/HEIF (běžné z iPhonu) prohlížeče kromě Safari neumí vykreslit v <img> —
+  // místo „rozbitého" náhledu to řekneme narovinu a necháme otevřít v novém okně.
+  const isUnpreviewableImage =
+    isImage && (mimeLower.includes("heic") || mimeLower.includes("heif"));
 
   const { data: extractionsData } = await sb
     .from("document_extractions")
@@ -476,6 +481,14 @@ export default async function DokumentDetailPage({
           <div className="p-5">
             {!previewUrl ? (
               <p className="text-sm text-muted">Náhled není k dispozici.</p>
+            ) : isUnpreviewableImage ? (
+              <div className="flex flex-col items-center justify-center gap-2 rounded-md border border-dashed border-line bg-surface-2 px-4 py-12 text-center">
+                <FileText size={22} className="text-muted" />
+                <p className="text-sm text-muted">
+                  Formát HEIC/HEIF prohlížeč neumí zobrazit v náhledu. Otevřete soubor
+                  v novém okně níže — stáhne se v původní kvalitě.
+                </p>
+              </div>
             ) : isImage ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img

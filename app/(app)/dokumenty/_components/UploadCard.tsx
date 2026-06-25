@@ -117,16 +117,20 @@ export function UploadCard({
         throw new Error(insErr?.message ?? "Nepodařilo se uložit dokument.");
       }
 
-      // Spustit AI extrakci (návrh). Nebrání úspěšnému nahrání — selhání jen logujeme.
-      try {
-        await fetch("/api/ai/extract", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ documentId: doc.id }),
-        });
-      } catch {
-        // extrakci lze spustit znovu z detailu dokumentu
-      }
+      // Spustit AI extrakci (návrh). NEBLOKUJE nahrání ani přechod na detail —
+      // extrakce může trvat několik sekund a uživatel nemá čekat na spinneru
+      // „Nahrávám…". `keepalive` zajistí, že požadavek doběhne i poté, co tato
+      // komponenta při přechodu na detail zmizí. Když přesto selže (nebo doběhne
+      // až po načtení detailu), na detailu je vidět buď probíhající návrh, nebo
+      // tlačítko „Navrhnout data" pro ruční spuštění — nic se neztratí.
+      void fetch("/api/ai/extract", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ documentId: doc.id }),
+        keepalive: true,
+      }).catch(() => {
+        // extrakci lze kdykoli spustit znovu z detailu dokumentu
+      });
 
       setFile(null);
       if (fileRef.current) fileRef.current.value = "";

@@ -294,3 +294,122 @@ export async function uploadOrgDocument(input: unknown): Promise<UploadDocResult
   revalidatePath("/pro");
   return { ok: true, id: doc.id, extracted };
 }
+
+// ---------- confirm / reject an AI extraction draft on an org passport ----------
+// HARD RULE: every AI output is a DRAFT the user confirms or rejects — nothing is
+// auto-trusted. The consumer app has this on /dokumenty/[id]; the B2B passport had
+// the "Návrh" badge but NO way to act on it, so org docs could never reach
+// 'confirmed'. That broke the handover: /prevzit surfaces only CONFIRMED extractions
+// as "Klíčová data", so a builder-uploaded PENB/revize never showed key dates to the
+// buyer. These two actions close that loop.
+//
+// We use the RLS-respecting client (NOT the service role): extractions_access +
+// docs_access already let an org member update a draft on a property they can reach
+// (can_access_property → property_org_links → is_org_member). No household is
+// involved, so — unlike the consumer flow — we deliberately create NO reminders:
+// reminders live on the household layer and the buyer receives contextual revize
+// only AFTER handover (the honest behaviour; we never invent "další revize do …").
+const DOC_CATEGORY_ALIASES: Record<string, (typeof DOC_CATEGORIES)[number]> = {
+  smlouva: "contract",
+  faktura: "invoice",
+  "revizní zpráva": "inspection",
+  revize: "inspection",
+  záruka: "warranty",
+  návod: "manual",
+  pojištění: "insurance",
+  plán: "plan",
+  výkres: "plan",
+};
+
+function normalizeDocCategory(raw: unknown): (typeof DOC_CATEGORIES)[number] | null {
+  if (typeof raw !== "string") return null;
+  const v = raw.trim().toLowerCase();
+  if ((DOC_CATEGORIES as readonly string[]).includes(v)) {
+    return v as (typeof DOC_CATEGORIES)[number];
+  }
+  return DOC_CATEGORY_ALIASES[v] ?? null;
+}
+
+const reviewSchema = z.object({
+  extraction_id: z.string().uuid(),
+  // property_id is only used to scope revalidation; the source of truth for access
+  // is the extraction's own document (read back under RLS), never this input.
+  property_id: z.string().uuid(),
+});
+
+export type ReviewResult = { ok: false; error: string } | { ok: true };
+
+export async function rejectPassportExtraction(input: unknown): Promise<ReviewResult> {
+  const parsed = reviewSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: "Neplatný požadavek." };
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return { ok: false, error: "Nejste přihlášeni." };
+
+  // RLS (extractions_access) permits the update only on an extraction whose document
+  // the caller can access — i.e. an org passport they belong to.
+  const { error } = await sb
+    .from("document_extractions")
+    .update({ status: "rejected", reviewed_by: user.id })
+    .eq("id", parsed.data.extraction_id);
+  if (error) return { ok: false, error: "Návrh se nepodařilo odmítnout." };
+
+  revalidatePath(`/pro/nemovitosti/${parsed.data.property_id}`);
+  return { ok: true };
+}
+
+export async function confirmPassportExtraction(input: unknown): Promise<ReviewResult> {
+  const parsed = reviewSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: "Neplatný požadavek." };
+
+  const sb = await createClient();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) return { ok: false, error: "Nejste přihlášeni." };
+
+  // Source of truth is the extraction itself (its document_id), read back under RLS —
+  // not a client-supplied document id. A miss here means no access or no such row.
+  const { data: ext } = await sb
+    .from("document_extractions")
+    .select("id, extracted, document_id, status")
+    .eq("id", parsed.data.extraction_id)
+    .maybeSingle();
+  if (!ext) return { ok: false, error: "Návrh nenalezen nebo k němu nemáte přístup." };
+
+  // Confirm only a fresh draft. If it was already confirmed (double submit) or
+  // superseded by a newer extraction (rejected), do nothing — never revive stale data.
+  if (ext.status !== "draft") {
+    revalidatePath(`/pro/nemovitosti/${parsed.data.property_id}`);
+    return { ok: true };
+  }
+
+  const { error: updErr } = await sb
+    .from("document_extractions")
+    .update({ status: "confirmed", reviewed_by: user.id })
+    .eq("id", parsed.data.extraction_id)
+    .eq("status", "draft"); // race guard: confirm only if still a draft
+  if (updErr) return { ok: false, error: "Návrh se nepodařilo potvrdit." };
+
+  // Confirmed data becomes source of truth: backfill the document category only when
+  // it is still the generic "other" — never overwrite what the firm chose on upload.
+  const data = (ext.extracted ?? {}) as { category?: string };
+  const suggested = normalizeDocCategory(data.category);
+  if (suggested) {
+    const { data: doc } = await sb
+      .from("documents")
+      .select("id, category")
+      .eq("id", ext.document_id as string)
+      .maybeSingle();
+    if (doc && doc.category === "other") {
+      await sb.from("documents").update({ category: suggested }).eq("id", doc.id);
+    }
+  }
+
+  revalidatePath(`/pro/nemovitosti/${parsed.data.property_id}`);
+  revalidatePath("/pro/nemovitosti");
+  return { ok: true };
+}

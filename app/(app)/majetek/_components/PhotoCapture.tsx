@@ -109,6 +109,13 @@ export function PhotoCapture({
     const file = e.target.files?.[0];
     if (!file) return;
     setError(null);
+    // Přijímáme jen obrázky. `accept="image/*"` lze v dialogu obejít, proto typ
+    // ověříme i tady — jinak bychom zbytečně nahráli soubor a rozpoznání selhalo.
+    if (file.type && !file.type.startsWith("image/")) {
+      setError("Vyberte prosím obrázek (JPG, PNG nebo HEIC).");
+      if (fileRef.current) fileRef.current.value = "";
+      return;
+    }
     // Pokud už byl nahraný nepotvrzený soubor (uživatel vybírá jiný), smaž ho.
     if (photoPath) void removeOrphan(photoPath);
     setBusy(true);

@@ -4,12 +4,12 @@
 // nahrává dokumenty na vrstvu nemovitosti, vidí AI návrhy a předá pas kupujícímu.
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, FileText, MapPin, Sparkles, Building2, CheckCircle2, Clock } from "lucide-react";
+import { ArrowLeft, MapPin, Sparkles, Building2, CheckCircle2, Clock } from "lucide-react";
 import { Card } from "@/components/ui/Card";
-import { Badge } from "@/components/ui/Badge";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { HandoverDialog } from "../../../../_components/HandoverDialog";
 import { ProUploadCard } from "../../../../_components/ProUploadCard";
+import { PassportDocItem } from "../../../../_components/PassportDocItem";
 import {
   getOrgProperty,
   getPassportDocuments,
@@ -23,18 +23,6 @@ import {
 } from "../../../../_components/propertyMeta";
 
 export const metadata = { title: "Pas nemovitosti — Pro firmy" };
-
-const CATEGORY_LABEL: Record<string, string> = {
-  contract: "Smlouva",
-  invoice: "Faktura",
-  penb: "PENB",
-  inspection: "Revizní zpráva",
-  manual: "Návod",
-  warranty: "Záruka",
-  plan: "Plán",
-  insurance: "Pojištění",
-  other: "Ostatní",
-};
 
 const STATUS_PILL: Record<string, string> = {
   draft: "bg-surface-2 text-muted",
@@ -61,6 +49,8 @@ export default async function ProPropertyDetailPage({
 
   const label = propertyName(property);
   const address = formatAddress(property);
+  // Kolik AI návrhů ještě čeká na potvrzení firmou (HARD RULE: nic se nepřebírá samo).
+  const draftCount = docs.filter((d) => d.extraction?.status === "draft").length;
 
   return (
     <div className="space-y-6">
@@ -133,31 +123,22 @@ export default async function ProPropertyDetailPage({
             <ul className="space-y-2">
               {docs.map((d) => (
                 <li key={d.id}>
-                  <Card className="flex items-center gap-4 p-4">
-                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-surface-2">
-                      <FileText size={18} className="text-honey" />
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-medium text-ink">{d.title ?? "Bez názvu"}</p>
-                      <p className="mt-0.5 text-xs text-muted">
-                        {new Date(d.created_at).toLocaleDateString("cs-CZ")}
-                      </p>
-                    </div>
-                    <div className="flex shrink-0 items-center gap-2">
-                      {d.transferable && <Badge tone="recommended">K nemovitosti</Badge>}
-                      {d.extraction?.status === "confirmed" ? (
-                        <Badge tone="verified">Potvrzeno</Badge>
-                      ) : d.extraction?.status === "draft" ? (
-                        <Badge tone="insurance_recommended">
-                          <Sparkles size={11} /> Návrh
-                        </Badge>
-                      ) : null}
-                      <Badge tone="draft">{CATEGORY_LABEL[d.category] ?? d.category}</Badge>
-                    </div>
-                  </Card>
+                  <PassportDocItem doc={d} propertyId={id} />
                 </li>
               ))}
             </ul>
+          )}
+
+          {draftCount > 0 && (
+            <p className="flex items-center gap-1.5 text-xs text-honey-600">
+              <Sparkles size={13} />
+              {draftCount === 1
+                ? "1 návrh čeká na potvrzení."
+                : draftCount < 5
+                  ? `${draftCount} návrhy čekají na potvrzení.`
+                  : `${draftCount} návrhů čeká na potvrzení.`}{" "}
+              Potvrzená data se předají kupujícímu.
+            </p>
           )}
 
           <p className="flex items-center gap-1.5 pt-1 text-xs text-muted">

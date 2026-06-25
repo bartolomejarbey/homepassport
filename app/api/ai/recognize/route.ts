@@ -39,6 +39,14 @@ export async function POST(request: Request) {
   }
 
   const mime = blob.type || "image/jpeg";
+  // Vision model očekává obrázek. Pokud pod cestou není obrázek (jiný typ
+  // souboru), nemá smysl plýtvat voláním AI — vrátíme srozumitelnou chybu.
+  if (!mime.startsWith("image/")) {
+    return NextResponse.json(
+      { error: "Soubor není obrázek" },
+      { status: 415 },
+    );
+  }
   const base64 = Buffer.from(await blob.arrayBuffer()).toString("base64");
   const dataUrl = `data:${mime};base64,${base64}`;
 

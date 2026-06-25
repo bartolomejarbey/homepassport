@@ -3,6 +3,7 @@
 // signed-in user belongs to.
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import type { ProProperty } from "./propertyMeta";
 
 export type Org = { id: string; name: string; role: string };
@@ -136,26 +137,71 @@ export async function getPropertyHandoverState(
   };
 }
 
+export type PassportExtraction = {
+  id: string;
+  status: "draft" | "confirmed" | "rejected";
+  confidence: number | null;
+  /** Short, human-readable gist of the proposed fields (for the "Návrh" preview). */
+  summary: string | null;
+};
+
 export type PassportDoc = {
   id: string;
   title: string | null;
   category: string;
   transferable: boolean;
   created_at: string;
-  extraction: { status: "draft" | "confirmed" | "rejected"; confidence: number | null } | null;
+  /** Latest extraction (drives badge + confirm/reject buttons). */
+  extraction: PassportExtraction | null;
+  /** Short-lived signed link to the SOURCE file (the draft's provenance). */
+  sourceUrl: string | null;
 };
+
+// numeric -> PostgREST returns it as a string; normalise for display/compare.
+function toNum(c: number | string | null | undefined): number | null {
+  if (c == null) return null;
+  const n = typeof c === "number" ? c : Number(c);
+  return Number.isFinite(n) ? n : null;
+}
+
+// One honest line summarising what the model proposed — only fields it actually
+// returned, never invented. Drives the "Návrh" preview so confirm/reject is informed.
+function summariseExtraction(ex: Record<string, unknown> | null): string | null {
+  if (!ex) return null;
+  const parts: string[] = [];
+  const push = (label: string, v: unknown) => {
+    if (typeof v === "string" && v.trim()) parts.push(`${label}: ${v.trim()}`);
+    else if (typeof v === "number" && Number.isFinite(v)) parts.push(`${label}: ${v}`);
+  };
+  push("Dodavatel", ex.supplier);
+  push("Datum", ex.date);
+  push("Záruka do", ex.warranty_until);
+  push("Č. revize", ex.inspection_no);
+  if (typeof ex.amount === "number" && Number.isFinite(ex.amount)) {
+    const cur = typeof ex.currency === "string" && ex.currency.trim() ? ` ${ex.currency.trim()}` : "";
+    parts.push(`Částka: ${ex.amount}${cur}`);
+  }
+  if (parts.length === 0 && typeof ex.summary === "string" && ex.summary.trim()) {
+    return ex.summary.trim();
+  }
+  return parts.length ? parts.slice(0, 3).join(" · ") : null;
+}
 
 /**
  * Documents attached to an org property passport. These carry household_id = null
  * and property_id = the passport; docs_access RLS exposes them to org members via
- * can_access_property. Newest first; the latest AI draft drives the per-row badge.
+ * can_access_property. Newest first; the latest AI draft drives the per-row badge
+ * and the confirm/reject controls. Each row also gets a short-lived signed link to
+ * its source file (the draft's provenance) — org files live under <property_id>/...
+ * which storage RLS can't sign for a household-less org, so we sign with the admin
+ * client server-side (TTL 1h), never exposing the raw path. Same reasoning as upload.
  */
 export async function getPassportDocuments(propertyId: string): Promise<PassportDoc[]> {
   const sb = await createClient();
   const { data } = await sb
     .from("documents")
     .select(
-      "id, title, category, transferable, created_at, document_extractions(status, confidence, created_at)",
+      "id, title, category, transferable, file_path, created_at, document_extractions(id, status, confidence, extracted, created_at)",
     )
     .eq("property_id", propertyId)
     .order("created_at", { ascending: false });
@@ -165,13 +211,35 @@ export async function getPassportDocuments(propertyId: string): Promise<Passport
     title: string | null;
     category: string;
     transferable: boolean;
+    file_path: string;
     created_at: string;
     document_extractions:
-      | { status: "draft" | "confirmed" | "rejected"; confidence: number | null; created_at: string }[]
+      | {
+          id: string;
+          status: "draft" | "confirmed" | "rejected";
+          confidence: number | string | null;
+          extracted: Record<string, unknown> | null;
+          created_at: string;
+        }[]
       | null;
   };
 
-  return ((data as Raw[] | null) ?? []).map((d) => {
+  const rows = (data as Raw[] | null) ?? [];
+  if (rows.length === 0) return [];
+
+  // Batch-sign every source path in one round-trip (admin: org files have no
+  // household segment, so the RLS client cannot sign them). Map path -> signed URL.
+  const admin = createAdminClient();
+  const paths = rows.map((d) => d.file_path).filter(Boolean);
+  const signedByPath = new Map<string, string>();
+  if (paths.length > 0) {
+    const { data: signed } = await admin.storage.from("documents").createSignedUrls(paths, 3600);
+    for (const row of signed ?? []) {
+      if (row?.path && row.signedUrl) signedByPath.set(row.path, row.signedUrl);
+    }
+  }
+
+  return rows.map((d) => {
     const latest = (d.document_extractions ?? [])
       .slice()
       .sort((a, b) => (b.created_at ?? "").localeCompare(a.created_at ?? ""))[0];
@@ -181,7 +249,15 @@ export async function getPassportDocuments(propertyId: string): Promise<Passport
       category: d.category,
       transferable: d.transferable,
       created_at: d.created_at,
-      extraction: latest ? { status: latest.status, confidence: latest.confidence } : null,
+      extraction: latest
+        ? {
+            id: latest.id,
+            status: latest.status,
+            confidence: toNum(latest.confidence),
+            summary: summariseExtraction(latest.extracted),
+          }
+        : null,
+      sourceUrl: signedByPath.get(d.file_path) ?? null,
     };
   });
 }
