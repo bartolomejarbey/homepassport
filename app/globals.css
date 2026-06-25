@@ -1,0 +1,70 @@
+@import "tailwindcss";
+
+/* ============================================================
+   HOME PASSPORT — design system
+   "Passport / document" feel: trustworthy navy + warm honey,
+   on warm paper. Calm consumer product — soft radius, light
+   tonal elevation. (Distinct from any other ARBIQ product.)
+   ============================================================ */
+@theme {
+  --color-ink:        #11202E;  /* headlines / primary text */
+  --color-ink-soft:   #46586A;  /* body text */
+  --color-muted:      #7E8C99;  /* captions / meta */
+  --color-paper:      #FAF6EF;  /* app background (warm) */
+  --color-surface:    #FFFFFF;  /* cards */
+  --color-surface-2:  #F3EEE4;  /* subtle inset */
+  --color-line:       #E7DECF;  /* borders */
+
+  --color-navy:       #1E3A5F;  /* brand primary */
+  --color-navy-700:   #15304F;
+  --color-navy-900:   #0E2138;
+  --color-honey:      #C99A4E;  /* brand accent (passport gold) */
+  --color-honey-600:  #B5863B;
+  --color-honey-100:  #F3E6CC;
+  --color-teal:       #2F8F83;  /* success / verified */
+  --color-teal-100:   #DCEFEB;
+  --color-rust:       #C0492F;  /* danger / overdue */
+  --color-rust-100:   #F6DED7;
+
+  --font-sans:    var(--font-inter), system-ui, sans-serif;
+  --font-display: var(--font-fraunces), Georgia, serif;
+
+  --radius-sm: 8px;
+  --radius:    12px;
+  --radius-lg: 18px;
+}
+
+:root { color-scheme: light; }
+* { border-color: var(--color-line); }
+html, body { padding: 0; margin: 0; }
+body {
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+h1,h2,h3 { font-family: var(--font-display); letter-spacing: -0.01em; line-height: 1.08; }
+
+/* subtle tonal elevation, not heavy drop shadows */
+.card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius);
+  box-shadow: 0 1px 0 rgba(17,32,46,.03), 0 8px 24px -16px rgba(17,32,46,.18);
+}
+.badge {
+  display:inline-flex; align-items:center; gap:.4em;
+  font-size:11px; font-weight:600; letter-spacing:.02em;
+  padding:.28em .7em; border-radius:999px;
+}
+.btn {
+  display:inline-flex; align-items:center; justify-content:center; gap:.5em;
+  font-weight:600; border-radius:var(--radius-sm);
+  padding:.7em 1.15em; transition:.15s; cursor:pointer;
+}
+.btn-primary { background:var(--color-navy); color:#fff; }
+.btn-primary:hover { background:var(--color-navy-700); }
+.btn-honey { background:var(--color-honey); color:var(--color-navy-900); }
+.btn-honey:hover { background:var(--color-honey-600); }
+.btn-ghost { background:transparent; color:var(--color-navy); border:1px solid var(--color-line); }
+.btn-ghost:hover { background:var(--color-surface-2); }
