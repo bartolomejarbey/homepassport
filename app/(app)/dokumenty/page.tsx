@@ -25,7 +25,6 @@ const CATEGORY_LABEL: Record<string, string> = {
 
 type ExtractionRow = {
   status: "draft" | "confirmed" | "rejected";
-  confidence: number | null;
   created_at: string;
 };
 type DocRow = {
@@ -95,7 +94,7 @@ export default async function DokumentyPage({
     let query = sb
       .from("documents")
       .select(
-        "id, title, category, transferable, created_at, document_extractions(status, confidence, created_at)",
+        "id, title, category, transferable, created_at, document_extractions(status, created_at)",
       )
       .eq("household_id", householdId);
     // Filtr na nemovitost platí jen tehdy, když k ní opravdu máme přístup.

@@ -65,9 +65,20 @@ export async function proxy(request: NextRequest) {
   if (isProtected && !user) {
     const redirectUrl = request.nextUrl.clone();
     redirectUrl.pathname = "/prihlaseni";
-    // Preserve the originally requested path so we can bounce back after login.
-    redirectUrl.searchParams.set("next", pathname);
-    return NextResponse.redirect(redirectUrl);
+    // Preserve the originally requested path (including its query string) so we
+    // can bounce the user back exactly where they were headed after login.
+    redirectUrl.search = "";
+    redirectUrl.searchParams.set(
+      "next",
+      pathname + (request.nextUrl.search || ""),
+    );
+    const redirect = NextResponse.redirect(redirectUrl);
+    // Carry over any auth cookies getUser() refreshed onto `response`; a brand-new
+    // redirect response would otherwise drop a freshly rotated session cookie.
+    response.cookies.getAll().forEach((cookie) => {
+      redirect.cookies.set(cookie);
+    });
+    return redirect;
   }
 
   return response;

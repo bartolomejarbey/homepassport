@@ -21,6 +21,10 @@ type Source = {
 type Chunk = { id: string; text: string; source: Source };
 
 const MAX_CHUNKS = 8;
+// Strop pro výtahy z extrakcí: i kdyby jich bylo hodně, necháme místo i pro
+// připomínky a majetek (jinak by extrakce zabraly všech MAX_CHUNKS slotů a
+// relevantní revize/položka by do RAG kroku vůbec nedoputovaly).
+const EXTRACTION_MAX = Math.ceil(MAX_CHUNKS / 2);
 // Širší okno kandidátů pro potvrzené extrakce: relevanci dle dotazu filtrujeme
 // v JS (obsah je jsonb), tak ať máme z čeho vybírat i mimo nejnovějších MAX_CHUNKS.
 const EXTRACTION_CANDIDATES = 40;
@@ -264,9 +268,9 @@ async function textSearch(
   // nejvíce odpovídající úryvky, ne jen shody v názvu.
   let extractionHits = 0;
   for (const e of extrRes.data ?? []) {
-    // Z širšího okna kandidátů vybíráme nejvýše MAX_CHUNKS relevantních výtahů,
+    // Z širšího okna kandidátů vybíráme nejvýše EXTRACTION_MAX relevantních výtahů,
     // ať extrakce nezaberou celý výsledek a zůstane místo na připomínky/majetek.
-    if (extractionHits >= MAX_CHUNKS) break;
+    if (extractionHits >= EXTRACTION_MAX) break;
     // Vnořený vztah může přijít jako objekt nebo jednoprvkové pole — ošetříme obojí.
     const rel = (e as { documents?: unknown }).documents;
     const doc = (Array.isArray(rel) ? rel[0] : rel) as

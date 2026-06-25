@@ -160,16 +160,28 @@ export async function POST(request: Request) {
   const newBasisBySystem = new Map<string, string | null>();
   for (const d of drafts) newBasisBySystem.set(d.system_type, d.legal_basis);
 
-  // Supersedace: změní-li uživatel způsob užívání (např. vlastní bydlení → pronájem),
-  // u téhož systému se mění wording_type i právní základ. Staré OTEVŘENÉ připomínky
-  // pro tentýž systém, které už neodpovídají aktuálnímu pravidlu, poctivě uzavřeme
-  // jako 'dismissed' — jinak by vedle sebe svítila rozporná znění (doporučeno × ze zákona).
+  // Supersedace: změní-li uživatel kontext nemovitosti, staré OTEVŘENÉ připomínky
+  // už nemusí odpovídat realitě. Poctivě je uzavřeme jako 'dismissed' ve dvou případech:
+  //   1) Systém ZŮSTÁVÁ, ale změnil se režim užívání (vlastní bydlení → pronájem),
+  //      takže se u téhož systému mění wording_type i právní základ — jinak by vedle
+  //      sebe svítila rozporná znění (doporučeno × ze zákona).
+  //   2) Systém uživatel ODEBRAL (např. odškrtl plyn) nebo pro nový režim už k němu
+  //      žádné pravidlo není — pak by stará připomínka osiřele visela napořád.
+  // Pracujeme jen s připomínkami, jejichž systém umíme rozpoznat z legal_basis
+  // (mapa basisToSystem), a jen s typem 'inspection' (filtr v dotazu výše).
   const supersededIds = existing
     .filter((r) => r.status === "open" || r.status === "snoozed")
     .filter((r) => {
       const sys = r.legal_basis ? basisToSystem.get(r.legal_basis) : undefined;
-      if (!sys || !newBasisBySystem.has(sys)) return false;
-      return newBasisBySystem.get(sys) !== (r.legal_basis ?? null);
+      // Bez rozpoznaného systému nesaháme — mohlo by jít o ručně přidanou připomínku.
+      if (!sys) return false;
+      // Aktuální právní základ pro tento systém; není-li systém nyní řešený
+      // (odebraný / bez pravidla pro daný režim), bereme to jako null.
+      const activeBasis = newBasisBySystem.has(sys)
+        ? newBasisBySystem.get(sys)
+        : null;
+      // Liší-li se znění (včetně případu „systém už není řešen“), připomínku uzavřeme.
+      return activeBasis !== (r.legal_basis ?? null);
     })
     .map((r) => r.id);
 

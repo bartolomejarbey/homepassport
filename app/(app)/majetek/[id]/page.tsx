@@ -72,9 +72,23 @@ async function updateAsset(assetId: string, formData: FormData) {
     redirect(`/majetek/${assetId}`);
   }
 
+  // Kategorie přijmeme, pokud je ze standardního číselníku, NEBO pokud se shoduje
+  // se současně uloženou hodnotou položky. Návrh z fotky totiž může uložit i
+  // kategorii mimo číselník (např. „Bílá technika") a EditAssetForm ji uživateli
+  // nabízí předvybranou — bez tohoto by neměnící úprava tu kategorii tiše smazala.
+  const { data: current } = await sb
+    .from("assets")
+    .select("category")
+    .eq("id", assetId)
+    .maybeSingle();
+  const currentCategory = (current?.category as string | null) ?? null;
+
   const rawCategory = txt(formData.get("category"), 120);
   const category =
-    rawCategory && ASSET_CATEGORIES.includes(rawCategory) ? rawCategory : null;
+    rawCategory &&
+    (ASSET_CATEGORIES.includes(rawCategory) || rawCategory === currentCategory)
+      ? rawCategory
+      : null;
 
   const { error } = await sb
     .from("assets")

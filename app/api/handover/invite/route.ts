@@ -99,9 +99,23 @@ export async function POST(request: Request) {
     );
   }
 
+  // Org, pod kterou pas vznikl (builder/manager link) — připojíme ho k auditu, aby
+  // byla pozvánka pro členy firmy dohledatelná (audit_read filtruje na household_id
+  // NEBO organization_id; bez něj by řádek nikdo nepřečetl). Čteme přes RLS klienta:
+  // org member na svůj link vidí. Pro spotřebitelské předání (vlastník bez orgu)
+  // zůstane null — audit pak nese household kontext z accept fáze.
+  const { data: orgLinks } = await sb
+    .from("property_org_links")
+    .select("organization_id")
+    .eq("property_id", parsed.propertyId)
+    .limit(1);
+  const organizationId =
+    (orgLinks as { organization_id: string }[] | null)?.[0]?.organization_id ?? null;
+
   // audit_events má jen SELECT policy (RLS); zápis proto vede přes service role.
   await createAdminClient().from("audit_events").insert({
     actor_id: user.id,
+    organization_id: organizationId,
     property_id: parsed.propertyId,
     action: "handover.invited",
     target: { buyer_email: parsed.buyerEmail, invitation_id: invitation.id },

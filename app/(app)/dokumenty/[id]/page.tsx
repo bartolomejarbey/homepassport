@@ -64,7 +64,8 @@ type Status = "draft" | "confirmed" | "rejected";
 type ExtractionRow = {
   id: string;
   extracted: DocExtraction;
-  confidence: number | null;
+  // numeric -> z PostgREST přijde jako string; normalizujeme přes toNumber().
+  confidence: number | string | null;
   status: Status;
   created_at: string;
 };
@@ -298,16 +299,30 @@ function isFutureIsoDate(value: string): boolean {
   return t >= today.getTime();
 }
 
-function fmtConfidence(c: number | null) {
-  if (c === null || Number.isNaN(c)) return "neuvedeno";
-  return `${Math.round(c * 100)} %`;
+// Postgres `numeric` přijde z PostgREST jako string ("0.82"), ne number — TS typ
+// number tu lže. Sjednotíme na číslo na hranici, ať Math.round / porovnání i
+// Number.isNaN fungují spolehlivě (na stringu vrací isNaN vždy false).
+function toNumber(c: number | string | null): number | null {
+  if (c === null || c === undefined) return null;
+  const n = typeof c === "number" ? c : Number(c);
+  return Number.isFinite(n) ? n : null;
 }
 
-function confidenceTone(c: number | null) {
-  if (c === null) return "draft" as const;
-  if (c >= 0.8) return "verified" as const;
-  if (c >= 0.5) return "insurance_recommended" as const;
-  return "legal_required" as const;
+function fmtConfidence(c: number | string | null) {
+  const n = toNumber(c);
+  if (n === null) return "neuvedeno";
+  return `${Math.round(n * 100)} %`;
+}
+
+// Tón čistě informativní (spolehlivost návrhu), NE wording_type. Záměrně se vyhne
+// červenému „legal_required" tónu — ten patří jen zákonné povinnosti, ne nízké
+// jistotě AI, aby badge nelhal o významu.
+function confidenceTone(c: number | string | null) {
+  const n = toNumber(c);
+  if (n === null) return "draft" as const;
+  if (n >= 0.8) return "verified" as const;
+  if (n >= 0.5) return "insurance_recommended" as const;
+  return "draft" as const;
 }
 
 const FIELD_LABELS: { key: keyof DocExtraction; label: string }[] = [

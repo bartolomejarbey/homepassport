@@ -262,7 +262,7 @@ export async function uploadOrgDocument(input: unknown): Promise<UploadDocResult
       document_id: doc.id,
       extracted: result,
       confidence,
-      provider: "openai",
+      provider: process.env.AI_PROVIDER ?? "openai",
       model: process.env.AI_MODEL ?? "gpt-5.5",
       status: "draft",
     });

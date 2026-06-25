@@ -69,6 +69,7 @@ export default async function PrehledPage() {
   let passportSections = 0;
   let attention: AttentionItem[] = [];
   let overdueCount = 0;
+  let contextReady = false;
 
   if (householdId) {
     // První nemovitost domácnosti — cíl pro pas i rychlé akce.
@@ -85,7 +86,7 @@ export default async function PrehledPage() {
     // ne true — takže napočítáme jen to, co už skutečně hoří.
     const todayIso = new Date().toISOString().slice(0, 10);
 
-    const [docs, reminders, assets, sections, dueSoon, overdue] =
+    const [docs, reminders, assets, sections, dueSoon, overdue, ctx] =
       await Promise.all([
         sb
           .from("documents")
@@ -123,6 +124,24 @@ export default async function PrehledPage() {
           .eq("household_id", householdId)
           .in("status", ["open", "snoozed"])
           .lt("due_date", todayIso),
+        // Kontext užívání nemovitosti — řídí poctivý onboarding (viz needsContext).
+        // Řádek je nasazen už při založení nemovitosti, ale s prázdným užíváním;
+        // „vyplněný“ je až tehdy, když je zaškrtnutý aspoň jeden způsob užívání —
+        // stejné kritérium jako /pripominky a detail nemovitosti, ať číslo sedí.
+        propertyId
+          ? sb
+              .from("property_contexts")
+              .select("owner_occupied, rental, svj, business_use")
+              .eq("property_id", propertyId)
+              .maybeSingle()
+          : Promise.resolve({
+              data: null as {
+                owner_occupied: boolean;
+                rental: boolean;
+                svj: boolean;
+                business_use: boolean;
+              } | null,
+            }),
       ]);
 
     docCount = docs.count ?? 0;
@@ -131,6 +150,23 @@ export default async function PrehledPage() {
     passportSections = (sections as { count: number | null }).count ?? 0;
     attention = (dueSoon as { data: AttentionItem[] | null }).data ?? [];
     overdueCount = (overdue as { count: number | null }).count ?? 0;
+    const ctxRow = (
+      ctx as {
+        data: {
+          owner_occupied: boolean;
+          rental: boolean;
+          svj: boolean;
+          business_use: boolean;
+        } | null;
+      }
+    ).data;
+    contextReady = !!(
+      ctxRow &&
+      (ctxRow.owner_occupied ||
+        ctxRow.rental ||
+        ctxRow.svj ||
+        ctxRow.business_use)
+    );
   }
 
   const hasProperty = Boolean(propertyId);
@@ -194,12 +230,13 @@ export default async function PrehledPage() {
   const passportHref = propertyId ? `/nemovitost/${propertyId}` : "/nemovitost";
   const kontextHref = propertyId ? `/nemovitost/${propertyId}/kontext` : "/nemovitost";
 
-  // Druhý krok onboardingu: nemovitost už existuje, ale pas je zatím prázdný
-  // a žádné revize ještě nevznikly. Nejhodnotnější další krok je vyplnit kontext
-  // (komín / plyn / využití), protože z něj engine poctivě odvodí revize.
+  // Druhý krok onboardingu: nemovitost už existuje, ale způsob jejího užívání
+  // zatím nikdo nevyplnil (kontext nasazený při založení má prázdné užívání).
+  // Nejhodnotnější další krok je vyplnit kontext (komín / plyn / využití),
+  // protože z něj engine poctivě odvodí revize. Stejné kritérium jako /pripominky
+  // a detail nemovitosti, aby nudge zmizel přesně tehdy, co tam.
   // Záměrně nic neslibujeme „ze zákona“ — to řeší až /pripominky dle wording_type.
-  const needsContext =
-    hasProperty && passportSections === 0 && openReminders === 0;
+  const needsContext = hasProperty && !contextReady;
   // needsProperty: akce, které dávají smysl až po založení nemovitosti
   // (revize jsou vázané na konkrétní nemovitost a její využití). Ostatní akce
   // — nahrání dokumentu, přidání majetku fotkou, hledání — fungují i bez ní,
@@ -217,12 +254,21 @@ export default async function PrehledPage() {
       href: "/majetek",
       needsProperty: false,
     },
-    {
-      label: "Spočítat revize",
-      icon: CalendarClock,
-      href: "/pripominky",
-      needsProperty: true,
-    },
+    // Dokud není vyplněný kontext užívání, posíláme rovnou na dotazník — odtud
+    // engine poctivě odvodí revize. Akce tak nikdy neústí do slepé uličky.
+    contextReady
+      ? {
+          label: "Spočítat revize",
+          icon: CalendarClock,
+          href: "/pripominky",
+          needsProperty: true,
+        }
+      : {
+          label: "Nastavit revize",
+          icon: CalendarClock,
+          href: kontextHref,
+          needsProperty: true,
+        },
     {
       label: "Hledat ve svých datech",
       icon: Search,
