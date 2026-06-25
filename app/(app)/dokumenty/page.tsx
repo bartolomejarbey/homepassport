@@ -66,27 +66,37 @@ export default async function DokumentyPage({
     data: { user },
   } = await sb.auth.getUser();
 
-  const { data: membership } = await sb
-    .from("household_members")
-    .select("household_id")
-    .eq("user_id", user!.id)
-    .limit(1)
-    .maybeSingle();
+  // Členství v domácnosti (dle uživatele) a ověření nemovitosti z ?property=… (dle
+  // jejího id) na sobě nezávisí — pustíme je naráz místo za sebou. Filtr na docs níže
+  // pak potřebuje obojí, takže oba dotazy nejdřív počkáme.
+  // U nemovitosti ověřujeme přístup přes RLS (vrátí null, pokud na ni uživatel nemá
+  // právo) a seznam dokumentů pak zúžíme jen na ni.
+  const [membershipRes, propertyRes] = await Promise.all([
+    sb
+      .from("household_members")
+      .select("household_id")
+      .eq("user_id", user!.id)
+      .limit(1)
+      .maybeSingle(),
+    propertyId
+      ? sb
+          .from("properties")
+          .select("id, title, type, street, city")
+          .eq("id", propertyId)
+          .maybeSingle()
+      : Promise.resolve({
+          data: null as {
+            id: string;
+            title: string | null;
+            type: string;
+            street: string | null;
+            city: string | null;
+          } | null,
+        }),
+  ]);
 
-  const householdId = membership?.household_id ?? null;
-
-  // Když přicházíme z konkrétní nemovitosti (?property=...), ověříme přístup přes
-  // RLS (vrátí null, pokud na ni uživatel nemá právo) a seznam zúžíme jen na ni.
-  let property: { id: string; title: string | null; type: string; street: string | null; city: string | null } | null =
-    null;
-  if (propertyId) {
-    const { data } = await sb
-      .from("properties")
-      .select("id, title, type, street, city")
-      .eq("id", propertyId)
-      .maybeSingle();
-    property = data ?? null;
-  }
+  const householdId = membershipRes.data?.household_id ?? null;
+  const property = propertyRes.data ?? null;
   const activePropertyId = property?.id ?? null;
 
   let docs: DocRow[] = [];

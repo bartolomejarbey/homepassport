@@ -19,13 +19,26 @@ export default async function KontextPage({
   const { id } = await params;
   const sb = await createClient();
 
+  // Nemovitost a její kontext jsou nezávislé dotazy (oba jen dle id) — pustíme je
+  // naráz místo za sebou. Když nemovitost neexistuje / není přístupná, stejně končíme
+  // 404 a kontext zahodíme; ušetřený round-trip ale zrychlí běžnou cestu.
   // RLS gates access; missing property => 404.
-  const { data: property } = await sb
-    .from("properties")
-    .select("id, type, title, street, city")
-    .eq("id", id)
-    .maybeSingle();
+  const [propertyRes, contextRes] = await Promise.all([
+    sb
+      .from("properties")
+      .select("id, type, title, street, city")
+      .eq("id", id)
+      .maybeSingle(),
+    sb
+      .from("property_contexts")
+      .select(
+        "property_id, owner_occupied, rental, svj, business_use, has_chimney, chimney_fuel, has_gas, has_electrical, has_lps, has_pv",
+      )
+      .eq("property_id", id)
+      .maybeSingle(),
+  ]);
 
+  const property = propertyRes.data;
   if (!property) notFound();
 
   // The honesty preview must mirror exactly which revision_rules exist for THIS
@@ -35,13 +48,7 @@ export default async function KontextPage({
   // rule matrix (matrixForType).
   const propertyType = (property.type as PropertyType) ?? "house";
 
-  const { data: context } = await sb
-    .from("property_contexts")
-    .select(
-      "property_id, owner_occupied, rental, svj, business_use, has_chimney, chimney_fuel, has_gas, has_electrical, has_lps, has_pv",
-    )
-    .eq("property_id", id)
-    .maybeSingle();
+  const context = contextRes.data;
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">

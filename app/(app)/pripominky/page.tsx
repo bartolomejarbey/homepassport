@@ -41,27 +41,40 @@ export default async function PripominkyPage() {
       .maybeSingle();
     propertyId = ownerLink?.property_id ?? null;
 
-    if (propertyId) {
-      // Kontext je „vyplněný“, až když je zaškrtnutý aspoň jeden způsob užívání —
-      // stejné kritérium jako na detailu nemovitosti. Bez něj by výpočet revizí
-      // slepě předpokládal vlastní bydlení (fallback v activeUsage).
-      const { data: ctx } = await sb
-        .from("property_contexts")
-        .select("owner_occupied, rental, svj, business_use")
-        .eq("property_id", propertyId)
-        .maybeSingle();
-      contextReady = !!(
-        ctx &&
-        (ctx.owner_occupied || ctx.rental || ctx.svj || ctx.business_use)
-      );
-    }
+    // Kontext nemovitosti a seznam připomínek jsou nezávislé dotazy (jeden míří na
+    // property_contexts dle propertyId, druhý na reminders dle householdId) — pustíme
+    // je naráz místo za sebou, ať se latence sečte do jednoho round-tripu.
+    // Kontext je „vyplněný“, až když je zaškrtnutý aspoň jeden způsob užívání —
+    // stejné kritérium jako na detailu nemovitosti. Bez něj by výpočet revizí
+    // slepě předpokládal vlastní bydlení (fallback v activeUsage).
+    const [ctxRes, remindersRes] = await Promise.all([
+      propertyId
+        ? sb
+            .from("property_contexts")
+            .select("owner_occupied, rental, svj, business_use")
+            .eq("property_id", propertyId)
+            .maybeSingle()
+        : Promise.resolve({
+            data: null as {
+              owner_occupied: boolean;
+              rental: boolean;
+              svj: boolean;
+              business_use: boolean;
+            } | null,
+          }),
+      sb
+        .from("reminders")
+        .select("id, title, due_date, wording_type, legal_basis, status, type")
+        .eq("household_id", householdId)
+        .order("due_date", { ascending: true, nullsFirst: false }),
+    ]);
 
-    const { data } = await sb
-      .from("reminders")
-      .select("id, title, due_date, wording_type, legal_basis, status, type")
-      .eq("household_id", householdId)
-      .order("due_date", { ascending: true, nullsFirst: false });
-    reminders = (data as ReminderRow[] | null) ?? [];
+    const ctx = ctxRes.data;
+    contextReady = !!(
+      ctx &&
+      (ctx.owner_occupied || ctx.rental || ctx.svj || ctx.business_use)
+    );
+    reminders = (remindersRes.data as ReminderRow[] | null) ?? [];
   }
 
   const openReminders = reminders.filter(

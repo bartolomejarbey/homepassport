@@ -418,11 +418,19 @@ export default async function DokumentDetailPage({
     (propRaw as { id: string; title: string | null; type: string; street: string | null; city: string | null } | null) ??
     null;
 
-  // Podepsaná URL (TTL 1 h) — nikdy nevystavujeme syrovou cestu v úložišti.
-  const { data: signed } = await sb.storage
-    .from("documents")
-    .createSignedUrl(doc.file_path, 3600);
-  const previewUrl = signed?.signedUrl ?? null;
+  // Podepsaná URL náhledu (TTL 1 h, nikdy syrová cesta) a seznam extrakcí jsou
+  // nezávislé — podpis potřebuje jen file_path, extrakce jen document_id. Pustíme
+  // je naráz místo za sebou; jinak by se dvě round-tripy zbytečně sčítaly.
+  const [signedRes, extractionsRes] = await Promise.all([
+    sb.storage.from("documents").createSignedUrl(doc.file_path, 3600),
+    sb
+      .from("document_extractions")
+      .select("id, extracted, confidence, status, created_at")
+      .eq("document_id", id)
+      .order("created_at", { ascending: false }),
+  ]);
+
+  const previewUrl = signedRes.data?.signedUrl ?? null;
   const mimeLower = (doc.mime ?? "").toLowerCase();
   const isImage = mimeLower.startsWith("image/");
   // HEIC/HEIF (běžné z iPhonu) prohlížeče kromě Safari neumí vykreslit v <img> —
@@ -430,12 +438,7 @@ export default async function DokumentDetailPage({
   const isUnpreviewableImage =
     isImage && (mimeLower.includes("heic") || mimeLower.includes("heif"));
 
-  const { data: extractionsData } = await sb
-    .from("document_extractions")
-    .select("id, extracted, confidence, status, created_at")
-    .eq("document_id", id)
-    .order("created_at", { ascending: false });
-  const extractions = (extractionsData as ExtractionRow[] | null) ?? [];
+  const extractions = (extractionsRes.data as ExtractionRow[] | null) ?? [];
   const latest = extractions[0] ?? null;
 
   return (

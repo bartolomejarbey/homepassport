@@ -232,13 +232,27 @@ export default async function MajetekDetailPage({
   if (!asset) notFound();
   const a = asset as AssetRow;
 
-  // Fotky položky → podepsaná URL (TTL 1 h), nikdy syrová cesta.
-  const { data: photos } = await sb
-    .from("asset_photos")
-    .select("id, file_path")
-    .eq("asset_id", id)
-    .order("created_at", { ascending: true });
+  // Fotky položky a připojené dokumenty jsou nezávislé dotazy (oba jen dle asset_id) —
+  // pustíme je naráz místo za sebou, ať se latence sečte do jednoho round-tripu.
+  const [photosRes, docsRes] = await Promise.all([
+    sb
+      .from("asset_photos")
+      .select("id, file_path")
+      .eq("asset_id", id)
+      .order("created_at", { ascending: true }),
+    // Připojené dokumenty (záruky / faktury / návody) — přes documents.asset_id.
+    sb
+      .from("documents")
+      .select("id, title, category, created_at")
+      .eq("asset_id", id)
+      .order("created_at", { ascending: false }),
+  ]);
 
+  const photos = photosRes.data;
+  const docs = docsRes.data ?? [];
+
+  // Náhled první fotky → podepsaná URL (TTL 1 h), nikdy syrová cesta. Závisí na
+  // výsledku dotazu na fotky, proto až po něm.
   let photoUrl: string | null = null;
   const firstPath = photos?.[0]?.file_path;
   if (firstPath) {
@@ -247,14 +261,6 @@ export default async function MajetekDetailPage({
       .createSignedUrl(firstPath, 3600);
     photoUrl = signed?.signedUrl ?? null;
   }
-
-  // Připojené dokumenty (záruky / faktury / návody) — přes documents.asset_id.
-  const { data: docsData } = await sb
-    .from("documents")
-    .select("id, title, category, created_at")
-    .eq("asset_id", id)
-    .order("created_at", { ascending: false });
-  const docs = docsData ?? [];
 
   const meta: { label: string; value: string }[] = [];
   if (a.category) meta.push({ label: "Kategorie", value: a.category });

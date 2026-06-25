@@ -12,3 +12,8 @@ build/
 *.log
 .vercel
 next-env.d.ts
+# playwright e2e artifacts
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/

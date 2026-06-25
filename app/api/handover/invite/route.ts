@@ -15,6 +15,8 @@ import { publicOrigin } from "../origin";
 // Schéma (handoverInviteBody) viz lib/validation/schemas.ts.
 import { handoverInviteBody as Body } from "@/lib/validation/schemas";
 import { jsonError, readJson, rejectIfTooLarge } from "@/lib/util/api";
+// Transakční e-mail kupujícímu (best-effort: nikdy nesmí shodit pozvánku).
+import { sendHandoverInvitation } from "@/lib/email";
 
 export async function POST(request: Request) {
   try {
@@ -44,7 +46,7 @@ export async function POST(request: Request) {
     // pod RLS slouží jako autorizační brána před zápisem.
     const { data: prop, error: propErr } = await sb
       .from("properties")
-      .select("id")
+      .select("id, title")
       .eq("id", parsed.propertyId)
       .maybeSingle();
 
@@ -116,6 +118,20 @@ export async function POST(request: Request) {
     const organizationId =
       (orgLinks as { organization_id: string }[] | null)?.[0]?.organization_id ?? null;
 
+    // Jméno organizace do e-mailu ("Společnost X pro vás připravila…"). Čteme přes
+    // service role keyed na už ověřené organizationId: volající je autorizován k
+    // nemovitosti, ale nemusí mít přímý RLS read na řádek organizace, a chceme se
+    // vyhnout tomu, aby orgName zbytečně padlo na null. Jen čtení názvu, best-effort.
+    let orgName: string | null = null;
+    if (organizationId) {
+      const { data: org } = await createAdminClient()
+        .from("organizations")
+        .select("name")
+        .eq("id", organizationId)
+        .maybeSingle();
+      orgName = (org as { name: string } | null)?.name ?? null;
+    }
+
     // audit_events má jen SELECT policy (RLS); zápis proto vede přes service role.
     await createAdminClient().from("audit_events").insert({
       actor_id: user.id,
@@ -131,6 +147,22 @@ export async function POST(request: Request) {
     const origin = publicOrigin(request);
     const url = `${origin}/prevzit/${invitation.token}`;
 
+    // Odešli kupujícímu e-mail s claim odkazem. BEST-EFFORT: helper sám nikdy
+    // nevyhazuje (no-op bez RESEND_API_KEY, chyby polyká), ale i tak obalíme
+    // try/catch — selhání e-mailu NESMÍ shodit pozvánku. Odkaz vracíme vždy, aby
+    // ho šlo zkopírovat ručně. Výsledek promítneme do pole `emailed`.
+    let emailed = false;
+    try {
+      const res = await sendHandoverInvitation(invitation.buyer_email, {
+        propertyTitle: (prop as { title: string | null }).title,
+        claimUrl: url,
+        orgName,
+      });
+      emailed = res.ok;
+    } catch {
+      emailed = false;
+    }
+
     return NextResponse.json({
       id: invitation.id,
       token: invitation.token,
@@ -139,6 +171,7 @@ export async function POST(request: Request) {
       expiresAt: invitation.expires_at,
       url,
       path: `/prevzit/${invitation.token}`,
+      emailed,
     });
   } catch {
     // Poslední záchrana: cokoli neočekávaného skončí jako čistý JSON 500.
