@@ -64,9 +64,9 @@ export function NewPasswordForm() {
 
   if (done) {
     return (
-      <div className="rounded-lg border border-line bg-teal-100 p-5 text-sm text-ink">
+      <div role="status" className="rounded-lg border border-line bg-teal-100 p-5 text-sm text-ink">
         <div className="flex items-center gap-2 font-semibold text-teal">
-          <CheckCircle2 size={18} /> Heslo bylo změněno
+          <CheckCircle2 size={18} aria-hidden="true" /> Heslo bylo změněno
         </div>
         <p className="mt-2 text-ink-soft">Přesměrováváme vás do vašeho pasu…</p>
       </div>
@@ -76,8 +76,8 @@ export function NewPasswordForm() {
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-4" noValidate>
       {serverError && (
-        <div className="flex items-start gap-2 rounded-md border border-line bg-rust-100 px-3 py-2 text-sm text-rust">
-          <AlertCircle size={16} className="mt-0.5 shrink-0" />
+        <div role="alert" className="flex items-start gap-2 rounded-md border border-line bg-rust-100 px-3 py-2 text-sm text-rust">
+          <AlertCircle size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
           <span>{serverError}</span>
         </div>
       )}
@@ -92,10 +92,11 @@ export function NewPasswordForm() {
           autoComplete="new-password"
           placeholder="••••••••"
           aria-invalid={!!errors.password}
+          aria-describedby={errors.password ? "new-password-error" : undefined}
           {...register("password")}
         />
         {errors.password && (
-          <p className="mt-1 text-xs text-rust">{errors.password.message}</p>
+          <p id="new-password-error" className="mt-1 text-xs text-rust">{errors.password.message}</p>
         )}
       </div>
 
@@ -109,15 +110,16 @@ export function NewPasswordForm() {
           autoComplete="new-password"
           placeholder="••••••••"
           aria-invalid={!!errors.confirm}
+          aria-describedby={errors.confirm ? "confirm-error" : undefined}
           {...register("confirm")}
         />
         {errors.confirm && (
-          <p className="mt-1 text-xs text-rust">{errors.confirm.message}</p>
+          <p id="confirm-error" className="mt-1 text-xs text-rust">{errors.confirm.message}</p>
         )}
       </div>
 
       <Button type="submit" className="w-full" disabled={isSubmitting}>
-        {isSubmitting && <Loader2 size={16} className="animate-spin" />}
+        {isSubmitting && <Loader2 size={16} className="animate-spin" aria-hidden="true" />}
         Uložit nové heslo
       </Button>
     </form>

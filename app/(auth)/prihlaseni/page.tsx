@@ -4,7 +4,10 @@ import { createClient } from "@/lib/supabase/server";
 import { AuthForm } from "@/app/(auth)/_components/AuthForm";
 import { safeNextPath } from "@/app/(auth)/_components/safe-path";
 
-export const metadata = { title: "Přihlášení — Home Passport" };
+export const metadata = {
+  title: "Přihlášení",
+  description: "Přihlaste se do digitálního pasu své nemovitosti.",
+};
 
 export default async function LoginPage({
   searchParams,

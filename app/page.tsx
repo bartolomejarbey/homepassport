@@ -10,13 +10,13 @@ export default function LandingPage() {
       {/* ---------- Nav ---------- */}
       <header className="sticky top-0 z-50 border-b bg-paper/85 backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-5 py-3.5">
-          <div className="flex items-center gap-2">
+          <Link href="/" aria-label="Home Passport — domů" className="flex items-center gap-2">
             <span className="grid h-8 w-8 place-items-center rounded-md bg-navy text-honey">
-              <KeyRound size={17} />
+              <KeyRound size={17} aria-hidden="true" />
             </span>
             <span className="font-display text-lg font-semibold text-ink">Home Passport</span>
-          </div>
-          <nav className="hidden items-center gap-7 text-sm text-ink-soft md:flex">
+          </Link>
+          <nav aria-label="Hlavní" className="hidden items-center gap-7 text-sm text-ink-soft md:flex">
             <a href="#produkt" className="hover:text-navy">Produkt</a>
             <a href="#pro-firmy" className="hover:text-navy">Pro firmy</a>
             <a href="#bezpecnost" className="hover:text-navy">Bezpečnost</a>
@@ -31,9 +31,9 @@ export default function LandingPage() {
       {/* ---------- Hero ---------- */}
       <section className="relative overflow-hidden">
         <div className="mx-auto max-w-6xl px-5 py-20 md:py-28">
-          <span className="badge bg-honey-100 text-honey-600">
-            <Sparkles size={13} /> Kompatibilní s EU Digital Building Logbook
-          </span>
+          <p className="badge bg-honey-100 text-honey-600">
+            <Sparkles size={13} aria-hidden="true" /> Kompatibilní s EU Digital Building Logbook
+          </p>
           <h1 className="mt-5 max-w-3xl text-4xl font-semibold text-ink md:text-6xl">
             Celý váš domov.<br />
             <span className="text-navy">Jeden digitální pas.</span>
@@ -44,10 +44,10 @@ export default function LandingPage() {
           </p>
           <div className="mt-8 flex flex-wrap gap-3">
             <Link href="/registrace" className="btn btn-primary">
-              Založit pas zdarma <ArrowRight size={16} />
+              Založit pas zdarma <ArrowRight size={16} aria-hidden="true" />
             </Link>
             <Link href="#pro-firmy" className="btn btn-ghost">
-              <Building2 size={16} /> Jsem developer / stavební firma
+              <Building2 size={16} aria-hidden="true" /> Jsem developer / stavební firma
             </Link>
           </div>
           <p className="mt-4 text-sm text-muted">Data uložená v EU · šifrováno · bez sdílení třetím stranám.</p>
@@ -55,26 +55,27 @@ export default function LandingPage() {
       </section>
 
       {/* ---------- Dual audience ---------- */}
-      <section id="produkt" className="border-y bg-surface">
+      <section id="produkt" aria-labelledby="produkt-nadpis" className="border-y bg-surface">
+        <h2 id="produkt-nadpis" className="sr-only">Dva produkty, jedna platforma</h2>
         <div className="mx-auto grid max-w-6xl gap-6 px-5 py-16 md:grid-cols-2">
           <div className="card p-7">
-            <span className="grid h-11 w-11 place-items-center rounded-lg bg-teal-100 text-teal"><Home size={20} /></span>
+            <span className="grid h-11 w-11 place-items-center rounded-lg bg-teal-100 text-teal"><Home size={20} aria-hidden="true" /></span>
             <h3 className="mt-4 text-2xl text-ink">Home OS — pro majitele</h3>
             <p className="mt-2 text-ink-soft">Provoz domácnosti bez papírů a stresu z termínů.</p>
             <ul className="mt-5 space-y-2.5 text-sm text-ink-soft">
-              <li className="flex gap-2"><ScanLine size={17} className="mt-0.5 shrink-0 text-navy" /> Vyfoťte fakturu — AI z ní vytáhne záruku, částku i datum.</li>
-              <li className="flex gap-2"><BellRing size={17} className="mt-0.5 shrink-0 text-navy" /> Připomínky revizí a konců záruk přesně podle vašeho domu.</li>
-              <li className="flex gap-2"><Boxes size={17} className="mt-0.5 shrink-0 text-navy" /> Soupis majetku z fotek + odhad hodnoty pro pojistku.</li>
+              <li className="flex gap-2"><ScanLine size={17} className="mt-0.5 shrink-0 text-navy" aria-hidden="true" /> Vyfoťte fakturu — AI z ní vytáhne záruku, částku i datum.</li>
+              <li className="flex gap-2"><BellRing size={17} className="mt-0.5 shrink-0 text-navy" aria-hidden="true" /> Připomínky revizí a konců záruk přesně podle vašeho domu.</li>
+              <li className="flex gap-2"><Boxes size={17} className="mt-0.5 shrink-0 text-navy" aria-hidden="true" /> Soupis majetku z fotek + odhad hodnoty pro pojistku.</li>
             </ul>
           </div>
           <div className="card p-7">
-            <span className="grid h-11 w-11 place-items-center rounded-lg bg-honey-100 text-honey-600"><Building2 size={20} /></span>
+            <span className="grid h-11 w-11 place-items-center rounded-lg bg-honey-100 text-honey-600"><Building2 size={20} aria-hidden="true" /></span>
             <h3 className="mt-4 text-2xl text-ink">Home Passport — pro firmy</h3>
             <p className="mt-2 text-ink-soft">Předejte kupci hotový digitální pas nemovitosti.</p>
             <ul className="mt-5 space-y-2.5 text-sm text-ink-soft">
-              <li className="flex gap-2"><FileText size={17} className="mt-0.5 shrink-0 text-honey-600" /> Projekt, kolaudace, PENB a revize na jednom místě.</li>
-              <li className="flex gap-2"><KeyRound size={17} className="mt-0.5 shrink-0 text-honey-600" /> Předání pasu odkazem — kupec si aktivuje účet.</li>
-              <li className="flex gap-2"><ShieldCheck size={17} className="mt-0.5 shrink-0 text-honey-600" /> Vaše značka, váš nadstandard a soulad s EPBD.</li>
+              <li className="flex gap-2"><FileText size={17} className="mt-0.5 shrink-0 text-honey-600" aria-hidden="true" /> Projekt, kolaudace, PENB a revize na jednom místě.</li>
+              <li className="flex gap-2"><KeyRound size={17} className="mt-0.5 shrink-0 text-honey-600" aria-hidden="true" /> Předání pasu odkazem — kupec si aktivuje účet.</li>
+              <li className="flex gap-2"><ShieldCheck size={17} className="mt-0.5 shrink-0 text-honey-600" aria-hidden="true" /> Vaše značka, váš nadstandard a soulad s EPBD.</li>
             </ul>
           </div>
         </div>
@@ -86,9 +87,9 @@ export default function LandingPage() {
         <p className="mt-3 max-w-2xl text-ink-soft">Nahrajete podklady, zbytek obstará umělá inteligence.</p>
         <div className="mt-10 grid gap-5 md:grid-cols-3">
           {[
-            { icon: <FileText size={20} />, t: "Čtení dokumentů", d: "Z PDF i fotek vytáhne dodavatele, částky, konce záruk a čísla revizí. Termíny se založí samy." },
-            { icon: <ScanLine size={20} />, t: "Rozpoznání z fotek", d: "Vyfoťte místnost — AI rozpozná a zařadí vybavení do soupisu majetku." },
-            { icon: <Sparkles size={20} />, t: "Chytré hledání", d: "„Kde je kupní smlouva?“ „Kdy končí záruka pračky?“ Odpoví a doloží zdroj." },
+            { icon: <FileText size={20} aria-hidden="true" />, t: "Čtení dokumentů", d: "Z PDF i fotek vytáhne dodavatele, částky, konce záruk a čísla revizí. Termíny se založí samy." },
+            { icon: <ScanLine size={20} aria-hidden="true" />, t: "Rozpoznání z fotek", d: "Vyfoťte místnost — AI rozpozná a zařadí vybavení do soupisu majetku." },
+            { icon: <Sparkles size={20} aria-hidden="true" />, t: "Chytré hledání", d: "„Kde je kupní smlouva?“ „Kdy končí záruka pračky?“ Odpoví a doloží zdroj." },
           ].map((f) => (
             <div key={f.t} className="card p-6">
               <span className="grid h-11 w-11 place-items-center rounded-lg bg-surface-2 text-navy">{f.icon}</span>
@@ -103,16 +104,16 @@ export default function LandingPage() {
       <section id="pro-firmy" className="bg-navy text-white">
         <div className="mx-auto grid max-w-6xl gap-8 px-5 py-16 md:grid-cols-[1.2fr_1fr] md:items-center">
           <div>
-            <span className="badge bg-white/10 text-honey-100">Pro developery a stavební firmy</span>
+            <p className="badge bg-white/10 text-honey-100">Pro developery a stavební firmy</p>
             <h2 className="mt-4 text-3xl text-white md:text-4xl">Pas nemovitosti jako součást předání klíčů</h2>
             <p className="mt-4 max-w-xl text-white/80">
               Založte pas, naplňte ho technickou dokumentací a předejte kupci. Zvyšte
               vnímanou hodnotu, vyřešte EPBD a zůstaňte s klientem v kontaktu i po prodeji.
             </p>
             <div className="mt-6 flex flex-wrap gap-3">
-              <Link href="/pro/poptavka" className="btn btn-honey">Domluvit pilot <ArrowRight size={16} /></Link>
+              <Link href="/pro/poptavka" className="btn btn-honey">Domluvit pilot <ArrowRight size={16} aria-hidden="true" /></Link>
               <Link href="/pro" className="btn btn-ghost border border-white/20 text-white hover:bg-white/10">
-                <FolderKanban size={16} /> Do firemní konzole
+                <FolderKanban size={16} aria-hidden="true" /> Do firemní konzole
               </Link>
             </div>
           </div>
@@ -131,7 +132,7 @@ export default function LandingPage() {
       {/* ---------- Security ---------- */}
       <section id="bezpecnost" className="mx-auto max-w-6xl px-5 py-20">
         <div className="card p-8 md:p-10">
-          <span className="grid h-12 w-12 place-items-center rounded-lg bg-teal-100 text-teal"><ShieldCheck size={22} /></span>
+          <span className="grid h-12 w-12 place-items-center rounded-lg bg-teal-100 text-teal"><ShieldCheck size={22} aria-hidden="true" /></span>
           <h2 className="mt-4 text-3xl text-ink">Vaše data, pod kontrolou</h2>
           <div className="mt-6 grid gap-6 text-sm text-ink-soft md:grid-cols-3">
             <div><b className="text-ink">Uloženo v EU</b><p className="mt-1">Hosting i zpracování v Evropské unii. Šifrováno při přenosu i uložení.</p></div>

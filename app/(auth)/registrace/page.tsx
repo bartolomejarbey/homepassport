@@ -4,7 +4,11 @@ import { createClient } from "@/lib/supabase/server";
 import { AuthForm } from "@/app/(auth)/_components/AuthForm";
 import { safeNextPath } from "@/app/(auth)/_components/safe-path";
 
-export const metadata = { title: "Registrace — Home Passport" };
+export const metadata = {
+  title: "Registrace",
+  description:
+    "Založte si digitální pas nemovitosti zdarma — dokumenty, majetek, záruky i revize na jednom místě.",
+};
 
 export default async function SignupPage({
   searchParams,

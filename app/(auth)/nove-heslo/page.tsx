@@ -4,7 +4,11 @@ import { AlertCircle } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 import { NewPasswordForm } from "@/app/(auth)/_components/NewPasswordForm";
 
-export const metadata = { title: "Nové heslo — Home Passport" };
+export const metadata = {
+  title: "Nové heslo",
+  description: "Nastavte si nové heslo k účtu Home Passport.",
+  robots: { index: false, follow: false },
+};
 
 export default async function NewPasswordPage() {
   // The /auth/callback handler exchanged the recovery code for a session before

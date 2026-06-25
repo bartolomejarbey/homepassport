@@ -27,6 +27,41 @@ npm install
 npm run dev
 ```
 
+## Demo data
+Aby šla aplikace hned prozkoumat, je v `supabase/seed_demo.sql` připravená realistická
+ukázková domácnost: 1 domácnost + členství, 1 aktivní rodinný dům s kontextem
+(vlastní bydlení, komín na pevná paliva, plyn, elektro, FVE), vyplněné sekce pasu,
+4 dokumenty (faktura, PENB, revizní zpráva komína, záruční list) včetně jednoho
+**AI návrhu** (`document_extractions` ve stavu `draft`), 4 položky majetku v místnostech
+s odhadem hodnoty a 6 připomínek revizí napříč `legal_required` / `insurance_recommended`
+/ `recommended` — **jedna je po termínu** (kontrola komína). Připomínky drží poctivost
+revizního enginu: jako „povinné ze zákona“ je označený jen komín.
+
+Spuštění (v tomto pořadí):
+
+1. **Vytvoř demo uživatele.** Řádek v `auth.users` nejde založit z SQL — nejdřív se
+   zaregistruj v aplikaci na `/registrace`. Trigger `handle_new_user` ti automaticky
+   založí profil i domácnost „Moje domácnost“ (seed ji jen přejmenuje a naplní).
+2. **Zjisti jeho ID** v Supabase Studiu (SQL Editor):
+   ```sql
+   select id, email from auth.users order by created_at desc;
+   ```
+3. **Doplň ID do `supabase/seed_demo.sql`** — na jednom místě, úplně dole ve volání
+   `pg_temp.hp_seed_demo('…')` (hledej značku `>>> ZDE DOPLŇTE ID <<<`). Placeholder je
+   `00000000-0000-0000-0000-000000000001`.
+4. **Spusť celý soubor:**
+   - **Supabase Studio → SQL Editor →** vlož celý obsah `seed_demo.sql` → **Run**, nebo
+   - CLI: `psql "$DATABASE_URL" -f supabase/seed_demo.sql`
+
+Skript je **idempotentní** — lze ho spustit opakovaně (předchozí demo data dle pevných
+UUID nejdřív smaže a vloží znovu). Když ID neodpovídá žádnému uživateli v `auth.users`,
+transakce se bezpečně rollbackne a nic nezmění. Demo data koexistují s referenčními
+`revision_rules` ze `supabase/seed.sql`.
+
+> Pozn.: Soubory dokumentů fyzicky nenahráváme do Storage, takže náhled v detailu
+> dokumentu zobrazí „Náhled není k dispozici“ — řádky, kategorie i AI návrh se ale
+> zobrazí normálně.
+
 ## Bezpečnost
 - `SUPABASE_SERVICE_ROLE_KEY` je server-only (`lib/supabase/admin.ts`).
 - Storage URL jsou podepsané (TTL ≤ 1 h), žádný veřejný bucket.

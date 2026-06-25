@@ -1,7 +1,11 @@
 // app/(auth)/zapomenute-heslo/page.tsx — request a password-reset e-mail.
 import { ResetRequestForm } from "@/app/(auth)/_components/ResetRequestForm";
 
-export const metadata = { title: "Obnova hesla — Home Passport" };
+export const metadata = {
+  title: "Obnova hesla",
+  description: "Zapomněli jste heslo? Pošleme vám odkaz pro nastavení nového.",
+  robots: { index: false, follow: false },
+};
 
 export default function ForgotPasswordPage() {
   return (

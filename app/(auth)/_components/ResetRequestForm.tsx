@@ -54,9 +54,9 @@ export function ResetRequestForm() {
   if (sent) {
     return (
       <div className="space-y-4">
-        <div className="rounded-lg border border-line bg-teal-100 p-5 text-sm text-ink">
+        <div role="status" className="rounded-lg border border-line bg-teal-100 p-5 text-sm text-ink">
           <div className="flex items-center gap-2 font-semibold text-teal">
-            <MailCheck size={18} /> Zkontrolujte e-mail
+            <MailCheck size={18} aria-hidden="true" /> Zkontrolujte e-mail
           </div>
           <p className="mt-2 text-ink-soft">
             Pokud k zadané adrese existuje účet, poslali jsme na ni odkaz pro
@@ -67,7 +67,7 @@ export function ResetRequestForm() {
           href="/prihlaseni"
           className="flex items-center justify-center gap-1.5 text-sm font-medium text-navy hover:underline"
         >
-          <ArrowLeft size={15} /> Zpět na přihlášení
+          <ArrowLeft size={15} aria-hidden="true" /> Zpět na přihlášení
         </Link>
       </div>
     );
@@ -76,8 +76,8 @@ export function ResetRequestForm() {
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-4" noValidate>
       {serverError && (
-        <div className="flex items-start gap-2 rounded-md border border-line bg-rust-100 px-3 py-2 text-sm text-rust">
-          <AlertCircle size={16} className="mt-0.5 shrink-0" />
+        <div role="alert" className="flex items-start gap-2 rounded-md border border-line bg-rust-100 px-3 py-2 text-sm text-rust">
+          <AlertCircle size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
           <span>{serverError}</span>
         </div>
       )}
@@ -92,15 +92,16 @@ export function ResetRequestForm() {
           autoComplete="email"
           placeholder="jan@email.cz"
           aria-invalid={!!errors.email}
+          aria-describedby={errors.email ? "reset-email-error" : undefined}
           {...register("email")}
         />
         {errors.email && (
-          <p className="mt-1 text-xs text-rust">{errors.email.message}</p>
+          <p id="reset-email-error" className="mt-1 text-xs text-rust">{errors.email.message}</p>
         )}
       </div>
 
       <Button type="submit" className="w-full" disabled={isSubmitting}>
-        {isSubmitting && <Loader2 size={16} className="animate-spin" />}
+        {isSubmitting && <Loader2 size={16} className="animate-spin" aria-hidden="true" />}
         Poslat odkaz pro obnovu
       </Button>
 

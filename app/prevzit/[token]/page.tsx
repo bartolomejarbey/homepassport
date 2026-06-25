@@ -4,6 +4,7 @@
 // nositelem oprávnění, proto čteme adminem (kupující ještě nemá RLS přístup).
 // Přihlášený uživatel může nemovitost převzít (POST /api/handover/accept),
 // nepřihlášený je vyzván k registraci s tokenem neseným v ?next.
+import type { Metadata } from "next";
 import Link from "next/link";
 import {
   ArrowRightLeft,
@@ -23,7 +24,14 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { DownloadAll } from "./_components/DownloadAll";
 
-export const metadata = { title: "Převzetí pasu nemovitosti — Home Passport" };
+// Token-gated handover page — must never be indexed (the token is a bearer
+// credential and the content is private to the invited buyer).
+export const metadata: Metadata = {
+  title: "Převzetí pasu nemovitosti",
+  description:
+    "Převezměte digitální pas nemovitosti do své domácnosti. Přenáší se jen vrstva o nemovitosti — osobní data prodávajícího nikoli.",
+  robots: { index: false, follow: false },
+};
 
 type Params = { token: string };
 
@@ -119,7 +127,7 @@ function Shell({ children }: { children: React.ReactNode }) {
     <main className="min-h-screen bg-paper">
       <div className="border-b border-line bg-navy text-paper">
         <div className="mx-auto flex max-w-2xl items-center gap-2 px-4 py-4">
-          <ArrowRightLeft size={18} className="text-honey" />
+          <ArrowRightLeft size={18} className="text-honey" aria-hidden="true" />
           <span className="font-display text-lg font-semibold tracking-tight">
             Home Passport
           </span>
@@ -134,9 +142,9 @@ function Shell({ children }: { children: React.ReactNode }) {
 function InvalidState({ title, hint }: { title: string; hint: string }) {
   return (
     <Shell>
-      <div className="card flex flex-col items-center gap-2 p-8 text-center">
+      <div role="alert" className="card flex flex-col items-center gap-2 p-8 text-center">
         <span className="flex h-11 w-11 items-center justify-center rounded-md bg-rust-100">
-          <AlertCircle size={22} className="text-rust" />
+          <AlertCircle size={22} className="text-rust" aria-hidden="true" />
         </span>
         <h1 className="mt-1 text-xl text-ink">{title}</h1>
         <p className="max-w-sm text-sm text-ink-soft">{hint}</p>
@@ -221,7 +229,7 @@ export default async function PrevzitPage({
         <Shell>
           <div className="card flex flex-col items-center gap-2 p-8 text-center">
             <span className="flex h-11 w-11 items-center justify-center rounded-md bg-teal-100">
-              <BadgeCheck size={22} className="text-teal" />
+              <BadgeCheck size={22} className="text-teal" aria-hidden="true" />
             </span>
             <h1 className="mt-1 text-xl text-ink">Pas už máte převzatý</h1>
             <p className="max-w-sm text-sm text-ink-soft">
@@ -232,7 +240,7 @@ export default async function PrevzitPage({
               href={`/nemovitost/${invitation.property_id}`}
               className="btn btn-primary mt-3 text-sm"
             >
-              <Home size={16} />
+              <Home size={16} aria-hidden="true" />
               Otevřít nemovitost
             </Link>
           </div>
@@ -465,9 +473,9 @@ export default async function PrevzitPage({
     <Shell>
       <div className="space-y-6">
         <div>
-          <span className="badge bg-honey-100 text-honey-600">
-            <ArrowRightLeft size={12} /> Předání pasu
-          </span>
+          <p className="badge bg-honey-100 text-honey-600">
+            <ArrowRightLeft size={12} aria-hidden="true" /> Předání pasu
+          </p>
           <h1 className="mt-3 text-2xl text-ink sm:text-3xl">
             Převezměte pas nemovitosti
           </h1>
@@ -481,7 +489,7 @@ export default async function PrevzitPage({
         <div className="card p-5">
           <div className="flex items-start gap-3">
             <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-navy text-paper">
-              <Home size={20} />
+              <Home size={20} aria-hidden="true" />
             </span>
             <div className="min-w-0">
               <h2 className="font-display text-lg font-semibold text-ink">
@@ -493,8 +501,8 @@ export default async function PrevzitPage({
                 </span>
                 {address && (
                   <>
-                    <span className="text-line">·</span>
-                    <MapPin size={14} className="text-muted" />
+                    <span className="text-line" aria-hidden="true">·</span>
+                    <MapPin size={14} className="text-muted" aria-hidden="true" />
                     <span>{address}</span>
                   </>
                 )}
@@ -522,14 +530,14 @@ export default async function PrevzitPage({
 
           <div className="mt-4 grid grid-cols-2 gap-3 border-t border-line pt-4">
             <div className="flex items-center gap-2 text-sm text-ink-soft">
-              <ShieldCheck size={16} className="shrink-0 text-teal" />
+              <ShieldCheck size={16} className="shrink-0 text-teal" aria-hidden="true" />
               <span>
                 <span className="font-semibold text-ink">{sectionRows.length}</span>{" "}
                 {sectionRows.length === 1 ? "sekce pasu" : "sekcí pasu"}
               </span>
             </div>
             <div className="flex items-center gap-2 text-sm text-ink-soft">
-              <FileText size={16} className="shrink-0 text-honey" />
+              <FileText size={16} className="shrink-0 text-honey" aria-hidden="true" />
               <span>
                 <span className="font-semibold text-ink">{transferableDocs}</span>{" "}
                 {transferableDocs === 1 ? "přenosný dokument" : "přenosných dokumentů"}
@@ -559,7 +567,7 @@ export default async function PrevzitPage({
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div className="card border-teal/30 bg-teal-100/40 p-4">
             <div className="flex items-center gap-2">
-              <ArrowRightLeft size={16} className="text-teal" />
+              <ArrowRightLeft size={16} className="text-teal" aria-hidden="true" />
               <p className="font-display text-sm font-semibold text-ink">
                 Přenáší se na vás
               </p>
@@ -571,7 +579,7 @@ export default async function PrevzitPage({
           </div>
           <div className="card border-line bg-surface-2/60 p-4">
             <div className="flex items-center gap-2">
-              <Lock size={16} className="text-ink-soft" />
+              <Lock size={16} className="text-ink-soft" aria-hidden="true" />
               <p className="font-display text-sm font-semibold text-ink">
                 Nepřenáší se
               </p>
@@ -603,7 +611,7 @@ export default async function PrevzitPage({
             {keyDates.length > 0 && (
               <div className="mt-4 border-t border-line pt-4">
                 <p className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted">
-                  <CalendarClock size={13} /> Klíčová data
+                  <CalendarClock size={13} aria-hidden="true" /> Klíčová data
                 </p>
                 <ul className="mt-2 space-y-1.5">
                   {keyDates.map((k) => (
@@ -619,7 +627,7 @@ export default async function PrevzitPage({
                   ))}
                 </ul>
                 <p className="mt-2 flex items-start gap-1.5 text-xs text-muted">
-                  <BadgeCheck size={13} className="mt-0.5 shrink-0 text-teal" />
+                  <BadgeCheck size={13} className="mt-0.5 shrink-0 text-teal" aria-hidden="true" />
                   Data pocházejí z potvrzených dokumentů.
                   {hasInspectionDate
                     ? " Datum revize je datum jejího provedení — termín další revize se vám odkryje po převzetí, podle kontextu nemovitosti."
@@ -631,7 +639,7 @@ export default async function PrevzitPage({
             {topDocs.length > 0 && (
               <div className="mt-4 border-t border-line pt-4">
                 <p className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted">
-                  <FileText size={13} /> Klíčové dokumenty
+                  <FileText size={13} aria-hidden="true" /> Klíčové dokumenty
                 </p>
                 <ul className="mt-2 divide-y divide-line">
                   {topDocs.map((d) => (
@@ -640,7 +648,7 @@ export default async function PrevzitPage({
                       className="flex items-center gap-3 py-2.5 first:pt-0 last:pb-0"
                     >
                       <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-surface-2">
-                        <FileText size={16} className="text-honey" />
+                        <FileText size={16} className="text-honey" aria-hidden="true" />
                       </span>
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-sm font-medium text-ink">
@@ -657,17 +665,19 @@ export default async function PrevzitPage({
                             href={d.previewUrl}
                             target="_blank"
                             rel="noopener noreferrer"
+                            aria-label={`Náhled dokumentu ${d.title} (otevře se v novém okně)`}
                             className="inline-flex items-center gap-1 text-xs font-medium text-navy hover:underline"
                           >
-                            <ExternalLink size={13} /> Náhled
+                            <ExternalLink size={13} aria-hidden="true" /> <span aria-hidden="true">Náhled</span>
                           </a>
                         )}
                         {d.downloadUrl && (
                           <a
                             href={d.downloadUrl}
+                            aria-label={`Stáhnout dokument ${d.title}`}
                             className="inline-flex items-center gap-1 text-xs font-medium text-ink-soft hover:text-ink"
                           >
-                            Stáhnout
+                            <span aria-hidden="true">Stáhnout</span>
                           </a>
                         )}
                       </div>
@@ -686,7 +696,7 @@ export default async function PrevzitPage({
                   </p>
                 )}
                 <p className="mt-2 flex items-start gap-1.5 text-xs text-muted">
-                  <ShieldQuestion size={13} className="mt-0.5 shrink-0 text-ink-soft" />
+                  <ShieldQuestion size={13} className="mt-0.5 shrink-0 text-ink-soft" aria-hidden="true" />
                   Zobrazené odkazy jsou dočasné (platí 1 hodinu) a vedou jen na
                   dokumenty výslovně označené jako přenosné.
                 </p>
@@ -699,8 +709,8 @@ export default async function PrevzitPage({
         {user ? (
           <div className="card p-5">
             {acceptError && (
-              <div className="mb-4 flex items-start gap-2 rounded-md border border-line bg-rust-100 px-3 py-2 text-sm text-rust">
-                <AlertCircle size={16} className="mt-0.5 shrink-0" />
+              <div role="alert" className="mb-4 flex items-start gap-2 rounded-md border border-line bg-rust-100 px-3 py-2 text-sm text-rust">
+                <AlertCircle size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
                 <span>{acceptError}</span>
               </div>
             )}
@@ -716,7 +726,7 @@ export default async function PrevzitPage({
             <form action="/api/handover/accept" method="post" className="mt-4">
               <input type="hidden" name="token" value={token} />
               <button type="submit" className="btn btn-primary w-full text-sm">
-                <ArrowRightLeft size={16} />
+                <ArrowRightLeft size={16} aria-hidden="true" />
                 Převzít do mé domácnosti
               </button>
             </form>
@@ -743,7 +753,7 @@ export default async function PrevzitPage({
 
         {invitation.expires_at && (
           <p className="flex items-center justify-center gap-1.5 text-xs text-muted">
-            <Clock size={13} />
+            <Clock size={13} aria-hidden="true" />
             Odkaz je platný do{" "}
             {new Date(invitation.expires_at).toLocaleDateString("cs-CZ", {
               day: "numeric",

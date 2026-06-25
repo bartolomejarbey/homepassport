@@ -7,9 +7,9 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
     <main className="min-h-screen bg-paper">
       <div className="mx-auto flex min-h-screen max-w-md flex-col px-5 py-10">
         {/* Brand */}
-        <Link href="/" className="flex items-center gap-2 self-start">
+        <Link href="/" aria-label="Home Passport — domů" className="flex items-center gap-2 self-start">
           <span className="grid h-8 w-8 place-items-center rounded-md bg-navy text-honey">
-            <KeyRound size={17} />
+            <KeyRound size={17} aria-hidden="true" />
           </span>
           <span className="font-display text-lg font-semibold text-ink">
             Home Passport
@@ -21,7 +21,7 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
           <div className="card p-7">{children}</div>
 
           <p className="mt-5 flex items-center justify-center gap-1.5 text-xs text-muted">
-            <ShieldCheck size={13} className="text-teal" />
+            <ShieldCheck size={13} className="text-teal" aria-hidden="true" />
             Data uložená v EU · šifrováno · bez sdílení třetím stranám.
           </p>
         </div>

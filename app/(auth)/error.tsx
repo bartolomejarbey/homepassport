@@ -24,13 +24,13 @@ export default function AuthError({
         </p>
       </div>
 
-      <div className="flex items-start gap-2 rounded-md border border-line bg-rust-100 px-3 py-2 text-sm text-rust">
-        <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+      <div role="alert" className="flex items-start gap-2 rounded-md border border-line bg-rust-100 px-3 py-2 text-sm text-rust">
+        <AlertTriangle size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
         <span>Připojení k serveru se nezdařilo. Zkontrolujte síť a zkuste to znovu.</span>
       </div>
 
       <Button type="button" className="w-full" onClick={() => reset()}>
-        <RotateCcw size={16} /> Zkusit znovu
+        <RotateCcw size={16} aria-hidden="true" /> Zkusit znovu
       </Button>
 
       <p className="text-center text-sm text-ink-soft">
