@@ -3,6 +3,7 @@
 // app routes before they render.
 import { NextResponse, type NextRequest } from "next/server";
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
+import { DEV_BYPASS_COOKIE, devBypassEnabled } from "@/lib/dev-bypass";
 
 // Routes that require an authenticated user. Matched by prefix.
 const PROTECTED_PREFIXES = [
@@ -62,7 +63,11 @@ export async function proxy(request: NextRequest) {
       (p) => pathname === p || pathname.startsWith(`${p}/`),
     );
 
-  if (isProtected && !user) {
+  // Local-only login bypass (see lib/dev-bypass.ts): when the dev cookie is set
+  // and we're not in production, let protected routes through without a session.
+  const devBypass = devBypassEnabled(request.cookies.get(DEV_BYPASS_COOKIE)?.value);
+
+  if (isProtected && !user && !devBypass) {
     const redirectUrl = request.nextUrl.clone();
     redirectUrl.pathname = "/prihlaseni";
     // Preserve the originally requested path (including its query string) so we

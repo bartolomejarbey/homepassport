@@ -45,6 +45,13 @@ export function AuthForm({ mode, next }: { mode: Mode; next?: string }) {
   const loginHref = next ? { pathname: "/prihlaseni", query: { next } } : "/prihlaseni";
   const signupHref = next ? { pathname: "/registrace", query: { next } } : "/registrace";
 
+  // Local-only "skip login" affordance (see lib/dev-bypass.ts). NODE_ENV is
+  // inlined at build time, so this whole block is dropped from production bundles.
+  const devBypass = process.env.NODE_ENV !== "production";
+  const bypassAction = next
+    ? `/auth/dev-bypass?next=${encodeURIComponent(next)}`
+    : "/auth/dev-bypass";
+
   async function onSubmit(values: FormValues) {
     setServerError(null);
     const sb = createClient();
@@ -109,6 +116,7 @@ export function AuthForm({ mode, next }: { mode: Mode; next?: string }) {
   }
 
   return (
+    <>
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-4" noValidate>
       {serverError && (
         <div role="alert" className="flex items-start gap-2 rounded-md border border-line bg-rust-100 px-3 py-2 text-sm text-rust">
@@ -201,6 +209,20 @@ export function AuthForm({ mode, next }: { mode: Mode; next?: string }) {
         )}
       </p>
     </form>
+
+      {devBypass && (
+        <div className="mt-6 border-t border-dashed border-line pt-4 text-center">
+          <p className="mb-2 text-xs text-muted">
+            Jen pro lokální vývoj — vstup bez backendu
+          </p>
+          <form action={bypassAction} method="post">
+            <button type="submit" className="btn btn-ghost w-full text-sm">
+              Přeskočit přihlášení (DEV)
+            </button>
+          </form>
+        </div>
+      )}
+    </>
   );
 }
 
