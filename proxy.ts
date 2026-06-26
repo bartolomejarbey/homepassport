@@ -26,32 +26,43 @@ export async function proxy(request: NextRequest) {
   // Mutable response we can attach refreshed auth cookies to.
   let response = NextResponse.next({ request });
 
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return request.cookies.getAll();
-        },
-        setAll(cookiesToSet: { name: string; value: string; options?: CookieOptions }[]) {
-          // Write refreshed cookies back onto both the request and the response.
-          cookiesToSet.forEach(({ name, value }) =>
-            request.cookies.set(name, value),
-          );
-          response = NextResponse.next({ request });
-          cookiesToSet.forEach(({ name, value, options }) =>
-            response.cookies.set(name, value, options),
-          );
-        },
-      },
-    },
-  );
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseAnon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-  // IMPORTANT: getUser() refreshes the session and must run before any redirect.
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  // Resolve the signed-in user. If Supabase isn't configured yet (e.g. a fresh
+  // deploy whose env vars aren't set), or the auth call fails transiently, do NOT
+  // 500 the entire site from middleware — degrade to "logged out". Public pages
+  // (landing, login) keep rendering; protected pages fall through to the login
+  // redirect below. Once the env vars are present this path is identical to before.
+  let user = null;
+  if (supabaseUrl && supabaseAnon) {
+    try {
+      const supabase = createServerClient(supabaseUrl, supabaseAnon, {
+        cookies: {
+          getAll() {
+            return request.cookies.getAll();
+          },
+          setAll(cookiesToSet: { name: string; value: string; options?: CookieOptions }[]) {
+            // Write refreshed cookies back onto both the request and the response.
+            cookiesToSet.forEach(({ name, value }) =>
+              request.cookies.set(name, value),
+            );
+            response = NextResponse.next({ request });
+            cookiesToSet.forEach(({ name, value, options }) =>
+              response.cookies.set(name, value, options),
+            );
+          },
+        },
+      });
+
+      // IMPORTANT: getUser() refreshes the session and must run before any redirect.
+      const { data } = await supabase.auth.getUser();
+      user = data.user;
+    } catch {
+      // Misconfigured/unreachable Supabase — treat as logged out instead of 500.
+      user = null;
+    }
+  }
 
   const { pathname } = request.nextUrl;
   const isPublicException = PUBLIC_EXCEPTIONS.some(
