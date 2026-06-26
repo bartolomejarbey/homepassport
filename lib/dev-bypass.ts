@@ -12,8 +12,15 @@
 
 export const DEV_BYPASS_COOKIE = "dev_bypass";
 
-// Only ever available outside a production build.
-export const DEV_BYPASS_AVAILABLE = process.env.NODE_ENV !== "production";
+// Availability:
+//  • always in local dev (NODE_ENV !== "production"), and
+//  • in a production build ONLY when explicitly opted in via
+//    NEXT_PUBLIC_ALLOW_DEV_BYPASS=1 — e.g. a pre-launch Vercel preview that has
+//    no real backend yet, so you can click through the UI. It is OFF by default
+//    and must never stay on once the deployment holds real user data.
+export const DEV_BYPASS_AVAILABLE =
+  process.env.NODE_ENV !== "production" ||
+  process.env.NEXT_PUBLIC_ALLOW_DEV_BYPASS === "1";
 
 // Deterministic fake session user. The id is a valid UUID so it slots into the
 // same query shapes a real user id would; with no backend the queries just

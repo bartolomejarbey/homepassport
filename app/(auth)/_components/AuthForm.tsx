@@ -45,9 +45,12 @@ export function AuthForm({ mode, next }: { mode: Mode; next?: string }) {
   const loginHref = next ? { pathname: "/prihlaseni", query: { next } } : "/prihlaseni";
   const signupHref = next ? { pathname: "/registrace", query: { next } } : "/registrace";
 
-  // Local-only "skip login" affordance (see lib/dev-bypass.ts). NODE_ENV is
-  // inlined at build time, so this whole block is dropped from production bundles.
-  const devBypass = process.env.NODE_ENV !== "production";
+  // "Skip login" affordance (see lib/dev-bypass.ts). Shown in local dev, and in
+  // production only when NEXT_PUBLIC_ALLOW_DEV_BYPASS=1 (a pre-launch preview
+  // with no real backend). Both flags are inlined at build time.
+  const devBypass =
+    process.env.NODE_ENV !== "production" ||
+    process.env.NEXT_PUBLIC_ALLOW_DEV_BYPASS === "1";
   const bypassAction = next
     ? `/auth/dev-bypass?next=${encodeURIComponent(next)}`
     : "/auth/dev-bypass";
