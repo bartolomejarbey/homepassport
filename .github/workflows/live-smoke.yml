@@ -20,37 +20,42 @@ jobs:
   probe:
     runs-on: ubuntu-latest
     steps:
-      - name: Probe live site (waits for deploy to settle)
+      - name: Probe live site (follow redirects, report final status)
         run: |
           set +e
           BASE="${{ github.event.inputs.base }}"
           [ -z "$BASE" ] && BASE="https://aurahomes.cz"
-          echo "Probing $BASE ..."
-          code="000"
-          for i in $(seq 1 18); do
-            code=$(curl -s -o /tmp/home.html -w "%{http_code}" --max-time 25 "$BASE/")
-            echo "attempt $i: GET / -> $code"
-            [ "$code" = "200" ] && break
-            sleep 15
+          probe () {
+            local path="$1"; local extra="$2"
+            echo "===================================================="
+            echo "### $path"
+            echo "--- response headers (NO follow) ---"
+            curl -sS $extra -D - -o /dev/null --max-time 30 "$BASE$path" 2>&1 | tr -d '\r' | sed -n '1,15p'
+            echo "--- following redirects ---"
+            local out; out=$(curl -sSL $extra -o /tmp/body.html -w "FINAL_STATUS=%{http_code} FINAL_URL=%{url_effective} REDIRECTS=%{num_redirects}" --max-time 40 "$BASE$path" 2>&1)
+            echo "$out"
+            echo "TITLE: $(grep -o '<title>[^<]*</title>' /tmp/body.html | head -1)"
+            echo "--- first 300 chars of final body ---"
+            head -c 300 /tmp/body.html; echo
+          }
+          # Try a few times in case the deploy is still settling.
+          for i in 1 2 3 4 5; do
+            fc=$(curl -sSL -o /dev/null -w "%{http_code}" --max-time 40 "$BASE/")
+            echo "settle attempt $i: final GET / -> $fc"
+            [ "$fc" = "200" ] && break
+            sleep 12
           done
-          echo "======== RESULTS ========"
-          echo "LANDING_STATUS: $code"
-          echo "TITLE: $(grep -o '<title>[^<]*</title>' /tmp/home.html | head -1)"
-          login=$(curl -s -o /tmp/login.html -w "%{http_code}" --max-time 25 "$BASE/prihlaseni")
-          echo "LOGIN_STATUS: $login"
-          if grep -q "Přeskočit přihlášení" /tmp/login.html; then echo "BYPASS_BUTTON: present"; else echo "BYPASS_BUTTON: absent"; fi
-          # full login-bypass flow, end to end, against the live site
-          curl -s -c /tmp/jar.txt -o /dev/null -X POST "$BASE/auth/dev-bypass"
-          dash=$(curl -s -b /tmp/jar.txt -o /tmp/dash.html -w "%{http_code}" --max-time 25 "$BASE/prehled")
-          echo "DASHBOARD_BYPASS_STATUS: $dash"
+          probe "/" ""
+          probe "/prihlaseni" ""
+          # full login-bypass flow end-to-end (follow redirects, keep cookies)
+          curl -sSL -c /tmp/jar.txt -o /dev/null -X POST "$BASE/auth/dev-bypass"
+          echo "==== /prehled with bypass cookie ===="
+          dash=$(curl -sSL -b /tmp/jar.txt -o /tmp/dash.html -w "%{http_code}" --max-time 40 "$BASE/prehled")
+          echo "DASHBOARD_BYPASS_FINAL_STATUS: $dash"
           if grep -q "Vítejte zpět" /tmp/dash.html; then echo "DASHBOARD_GREETING: present"; else echo "DASHBOARD_GREETING: absent"; fi
-          echo "--- first 200 chars of landing body ---"
-          head -c 200 /tmp/home.html
-          echo ""
-          echo "========================="
+          if grep -q "Přeskočit přihlášení" /tmp/dash.html; then echo "BYPASS_BUTTON_ON_DASH: present"; fi
           {
             echo "## aurahomes.cz live probe"
-            echo "- landing: \`$code\`"
-            echo "- login: \`$login\`"
-            echo "- dashboard (bypass): \`$dash\`"
+            echo "- landing final: \`$fc\`"
+            echo "- dashboard (bypass) final: \`$dash\`"
           } >> "$GITHUB_STEP_SUMMARY"
