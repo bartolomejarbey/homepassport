@@ -3,6 +3,7 @@ node_modules/
 .next/
 out/
 build/
+tsconfig.tsbuildinfo
 # env & secrets — NEVER commit
 .env
 .env.*
