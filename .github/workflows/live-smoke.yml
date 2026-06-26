@@ -10,6 +10,11 @@ on:
         description: "Base URL to probe"
         required: false
         default: "https://aurahomes.cz"
+  # Also runs on push that touches this file, so the probe can be triggered
+  # without workflow_dispatch permissions.
+  push:
+    paths:
+      - ".github/workflows/live-smoke.yml"
 
 jobs:
   probe:
