@@ -1,0 +1,51 @@
+name: live-smoke
+
+# Manually-triggered smoke test: fetches the LIVE site from a GitHub runner
+# (which has open internet) and reports status. Used to verify the production
+# deploy renders instead of throwing Internal Server Error.
+on:
+  workflow_dispatch:
+    inputs:
+      base:
+        description: "Base URL to probe"
+        required: false
+        default: "https://aurahomes.cz"
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe live site (waits for deploy to settle)
+        run: |
+          set +e
+          BASE="${{ github.event.inputs.base }}"
+          [ -z "$BASE" ] && BASE="https://aurahomes.cz"
+          echo "Probing $BASE ..."
+          code="000"
+          for i in $(seq 1 18); do
+            code=$(curl -s -o /tmp/home.html -w "%{http_code}" --max-time 25 "$BASE/")
+            echo "attempt $i: GET / -> $code"
+            [ "$code" = "200" ] && break
+            sleep 15
+          done
+          echo "======== RESULTS ========"
+          echo "LANDING_STATUS: $code"
+          echo "TITLE: $(grep -o '<title>[^<]*</title>' /tmp/home.html | head -1)"
+          login=$(curl -s -o /tmp/login.html -w "%{http_code}" --max-time 25 "$BASE/prihlaseni")
+          echo "LOGIN_STATUS: $login"
+          if grep -q "Přeskočit přihlášení" /tmp/login.html; then echo "BYPASS_BUTTON: present"; else echo "BYPASS_BUTTON: absent"; fi
+          # full login-bypass flow, end to end, against the live site
+          curl -s -c /tmp/jar.txt -o /dev/null -X POST "$BASE/auth/dev-bypass"
+          dash=$(curl -s -b /tmp/jar.txt -o /tmp/dash.html -w "%{http_code}" --max-time 25 "$BASE/prehled")
+          echo "DASHBOARD_BYPASS_STATUS: $dash"
+          if grep -q "Vítejte zpět" /tmp/dash.html; then echo "DASHBOARD_GREETING: present"; else echo "DASHBOARD_GREETING: absent"; fi
+          echo "--- first 200 chars of landing body ---"
+          head -c 200 /tmp/home.html
+          echo ""
+          echo "========================="
+          {
+            echo "## aurahomes.cz live probe"
+            echo "- landing: \`$code\`"
+            echo "- login: \`$login\`"
+            echo "- dashboard (bypass): \`$dash\`"
+          } >> "$GITHUB_STEP_SUMMARY"
