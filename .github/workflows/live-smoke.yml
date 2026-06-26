@@ -20,42 +20,27 @@ jobs:
   probe:
     runs-on: ubuntu-latest
     steps:
-      - name: Probe live site (follow redirects, report final status)
+      - name: Locate the homepassport deployment + probe it
         run: |
           set +e
-          BASE="${{ github.event.inputs.base }}"
-          [ -z "$BASE" ] && BASE="https://aurahomes.cz"
-          probe () {
-            local path="$1"; local extra="$2"
+          # Candidate hosts: the custom domain + likely Vercel URLs for this repo.
+          HOSTS="
+          https://www.aurahomes.cz
+          https://homepassport.vercel.app
+          https://homepassport-bartolomejarbey.vercel.app
+          https://homepassport-bartolomejarbeys-projects.vercel.app
+          https://homepassport-git-main-bartolomejarbeys-projects.vercel.app
+          "
+          for BASE in $HOSTS; do
             echo "===================================================="
-            echo "### $path"
-            echo "--- response headers (NO follow) ---"
-            curl -sS $extra -D - -o /dev/null --max-time 30 "$BASE$path" 2>&1 | tr -d '\r' | sed -n '1,15p'
-            echo "--- following redirects ---"
-            local out; out=$(curl -sSL $extra -o /tmp/body.html -w "FINAL_STATUS=%{http_code} FINAL_URL=%{url_effective} REDIRECTS=%{num_redirects}" --max-time 40 "$BASE$path" 2>&1)
-            echo "$out"
-            echo "TITLE: $(grep -o '<title>[^<]*</title>' /tmp/body.html | head -1)"
-            echo "--- first 300 chars of final body ---"
-            head -c 300 /tmp/body.html; echo
-          }
-          # Try a few times in case the deploy is still settling.
-          for i in 1 2 3 4 5; do
-            fc=$(curl -sSL -o /dev/null -w "%{http_code}" --max-time 40 "$BASE/")
-            echo "settle attempt $i: final GET / -> $fc"
-            [ "$fc" = "200" ] && break
-            sleep 12
+            echo "### HOST: $BASE"
+            land=$(curl -sSL -o /tmp/home.html -w "%{http_code}" --max-time 30 "$BASE/" 2>&1)
+            echo "GET /            -> final $land   url=$(curl -sSL -o /dev/null -w '%{url_effective}' --max-time 30 "$BASE/")"
+            echo "TITLE: $(grep -o '<title>[^<]*</title>' /tmp/home.html | head -1)"
+            login=$(curl -sSL -o /tmp/login.html -w "%{http_code}" --max-time 30 "$BASE/prihlaseni" 2>&1)
+            echo "GET /prihlaseni  -> final $login"
+            if grep -q "Home Passport" /tmp/home.html /tmp/login.html 2>/dev/null; then echo "IS_HOMEPASSPORT: yes (found 'Home Passport')"; else echo "IS_HOMEPASSPORT: no"; fi
+            if grep -q "Přeskočit přihlášení" /tmp/login.html; then echo "BYPASS_BUTTON: present"; fi
           done
-          probe "/" ""
-          probe "/prihlaseni" ""
-          # full login-bypass flow end-to-end (follow redirects, keep cookies)
-          curl -sSL -c /tmp/jar.txt -o /dev/null -X POST "$BASE/auth/dev-bypass"
-          echo "==== /prehled with bypass cookie ===="
-          dash=$(curl -sSL -b /tmp/jar.txt -o /tmp/dash.html -w "%{http_code}" --max-time 40 "$BASE/prehled")
-          echo "DASHBOARD_BYPASS_FINAL_STATUS: $dash"
-          if grep -q "Vítejte zpět" /tmp/dash.html; then echo "DASHBOARD_GREETING: present"; else echo "DASHBOARD_GREETING: absent"; fi
-          if grep -q "Přeskočit přihlášení" /tmp/dash.html; then echo "BYPASS_BUTTON_ON_DASH: present"; fi
-          {
-            echo "## aurahomes.cz live probe"
-            echo "- landing final: \`$fc\`"
-            echo "- dashboard (bypass) final: \`$dash\`"
-          } >> "$GITHUB_STEP_SUMMARY"
+          echo "==== summary in step summary ===="
+          echo "See logs above for per-host status." >> "$GITHUB_STEP_SUMMARY"
