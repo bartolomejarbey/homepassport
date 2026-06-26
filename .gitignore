@@ -8,6 +8,9 @@ tsconfig.tsbuildinfo
 .env
 .env.*
 !.env.example
+# .env.production holds ONLY placeholder bootstrap values (no real secrets) so
+# the Vercel deploy runs; real secrets go in the Vercel dashboard, which wins.
+!.env.production
 # misc
 .DS_Store
 *.log
